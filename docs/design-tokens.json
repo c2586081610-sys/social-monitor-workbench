@@ -1,0 +1,91 @@
+{
+  "meta": {
+    "project": "博主监控 + AI 笔记工作台",
+    "version": "1.0.0",
+    "date": "2026-08-22",
+    "p0_rules": [
+      "禁 emoji 当功能图标：唯一 SVG 图标源 lucide-react",
+      "禁紫色→粉色渐变",
+      "禁硬编码颜色：前端一律引用本 token（Tailwind theme.extend 落地）",
+      "禁 AI 模板味占位文案"
+    ]
+  },
+  "color": {
+    "bg.default": "#F8FAFC",
+    "bg.surface": "#FFFFFF",
+    "bg.sidebar": "#F1F5F9",
+    "text.primary": "#0F172A",
+    "text.secondary": "#475569",
+    "text.muted": "#94A3B8",
+    "border": "#E2E8F0",
+    "primary": "#2563EB",
+    "primary.hover": "#1D4ED8",
+    "success": "#16A34A",
+    "warning": "#D97706",
+    "danger": "#DC2626",
+    "info": "#0891B2"
+  },
+  "font": {
+    "sans": [
+      "-apple-system",
+      "PingFang SC",
+      "Microsoft YaHei",
+      "Segoe UI",
+      "Roboto",
+      "Helvetica Neue",
+      "Arial",
+      "sans-serif"
+    ],
+    "mono": [
+      "ui-monospace",
+      "SF Mono",
+      "Cascadia Code",
+      "Consolas",
+      "monospace"
+    ]
+  },
+  "radius": {
+    "sm": "0.25rem",
+    "md": "0.375rem",
+    "lg": "0.5rem",
+    "full": "9999px"
+  },
+  "shadow": {
+    "sm": "0 1px 2px 0 rgb(0 0 0 / 0.05)",
+    "md": "0 4px 6px -1px rgb(0 0 0 / 0.1)"
+  },
+  "icon": {
+    "library": "lucide-react",
+    "semantic_map": {
+      "add": "Plus",
+      "delete": "Trash2",
+      "download": "Download",
+      "transcribe": "AudioLines",
+      "note": "FileText",
+      "note_open": "NotebookPen",
+      "group": "Folder",
+      "group_add": "FolderPlus",
+      "tag": "Tag",
+      "tags": "Tags",
+      "unclassified": "Inbox",
+      "retry": "RotateCcw",
+      "open": "ExternalLink",
+      "refresh": "RefreshCw",
+      "settings": "Settings",
+      "warning": "AlertTriangle",
+      "success": "CheckCircle2",
+      "loading": "Loader2",
+      "error": "XCircle"
+    }
+  },
+  "status_semantics": {
+    "DOWNLOADING": "info",
+    "TRANSCRIBING": "info",
+    "FRAME_EXTRACTING": "info",
+    "NOTE_GENERATING": "info",
+    "DONE": "success",
+    "FAILED": "danger",
+    "COOKIE_NEEDS_RELOGIN": "danger",
+    "WARN": "warning"
+  }
+}

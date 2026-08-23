@@ -1,0 +1,110 @@
+"""works 业务：列表/详情/重试/关键帧/串行化。"""
+from __future__ import annotations
+
+from sqlalchemy.orm import Session
+
+from app.core.config import settings
+from app.core.errors import conflict, not_found
+from app.repositories import task_repo, work_repo
+from app.schemas.work import TaskStage, Work, WorkDetail, WorkPage
+from app.utils.manifest import frame_count, manifest_items, read_manifest
+
+
+def _serialize_work(work) -> Work:
+    data = Work.model_validate(work).model_dump()
+    data["frame_count"] = frame_count(settings.media_root, work.frame_manifest_path)
+    return Work(**data)
+
+
+class WorkService:
+    def list(self, db: Session, *, group_id, creator_id, tag, platform, status, source_type, unclassified, q, page, limit) -> WorkPage:
+        items, total = work_repo.list_works(
+            db,
+            group_id=group_id,
+            creator_id=creator_id,
+            tag=tag,
+            platform=platform,
+            status=status,
+            source_type=source_type,
+            unclassified=unclassified,
+            q=q,
+            page=page,
+            limit=limit,
+        )
+        return WorkPage(
+            items=[_serialize_work(w) for w in items],
+            total=total,
+            page=page,
+            limit=limit,
+            has_more=page * limit < total,
+        )
+
+    def unclassified(self, db: Session, page: int, limit: int) -> WorkPage:
+        items, total = work_repo.list_unclassified(db, page=page, limit=limit)
+        return WorkPage(
+            items=[_serialize_work(w) for w in items],
+            total=total,
+            page=page,
+            limit=limit,
+            has_more=page * limit < total,
+        )
+
+    def list_by_creator(self, db: Session, creator_id: int, page: int, limit: int) -> WorkPage:
+        if not _creator_exists(db, creator_id):
+            raise not_found("CREATOR_NOT_FOUND")
+        items, total = work_repo.list_by_creator(db, creator_id, page=page, limit=limit)
+        return WorkPage(
+            items=[_serialize_work(w) for w in items],
+            total=total,
+            page=page,
+            limit=limit,
+            has_more=page * limit < total,
+        )
+
+    def get_detail(self, db: Session, work_id: int) -> WorkDetail:
+        work = work_repo.get(db, work_id)
+        if work is None:
+            raise not_found("WORK_NOT_FOUND")
+        base = _serialize_work(work).model_dump()
+        base["tags"] = [{"id": t.id, "name": t.name, "kind": t.kind} for t in work.tags]
+        base["stages"] = [
+            TaskStage.model_validate(t).model_dump() for t in task_repo.list_by_work(db, work_id)
+        ]
+        base["transcript_path"] = work.transcript_path
+        base["frame_manifest_path"] = work.frame_manifest_path
+        return WorkDetail(**base)
+
+    def retry(self, db: Session, work_id: int) -> Work:
+        work = work_repo.get(db, work_id)
+        if work is None:
+            raise not_found("WORK_NOT_FOUND")
+        if work.status != "FAILED":
+            raise conflict("NOT_RETRYABLE")
+        work = work_repo.update(
+            db, work, status="QUEUED", last_error=None, retry_count=work.retry_count + 1
+        )
+        task_repo.upsert(db, work.id, "download", "pending", attempts=0)
+        db.commit()
+        return _serialize_work(work)
+
+    def frames(self, db: Session, work_id: int) -> dict:
+        work = work_repo.get(db, work_id)
+        if work is None:
+            raise not_found("WORK_NOT_FOUND")
+        manifest = read_manifest(settings.media_root, work.frame_manifest_path)
+        if manifest is None:
+            return {"semantic_aligned": False, "fallback": False, "items": []}
+        return {
+            "semantic_aligned": bool(manifest.get("semantic_aligned", False)),
+            "fallback": bool(manifest.get("fallback", False)),
+            "items": manifest_items(manifest),
+        }
+
+
+def _creator_exists(db: Session, creator_id: int) -> bool:
+    from app.repositories import creator_repo
+
+    return creator_repo.get(db, creator_id) is not None
+
+
+work_service = WorkService()

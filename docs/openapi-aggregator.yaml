@@ -1,0 +1,1155 @@
+openapi: 3.0.3
+info:
+  title: 博主监控 + AI 笔记工作台 — 聚合 API
+  version: 1.0.0
+  description: |
+    四平台（小红书/抖音/推特X/B站）博主监控、三件套（下载→转写→语义关键帧→AI 笔记）
+    进度、分组/双层标签/待分类/词库/凭据健康度的聚合 REST API。
+    前端据此生成 TS 类型 + MSW Mock；后端据此实现。变更必须先改本文件。
+  contact:
+    name: 首席架构师 高见远
+
+servers:
+  - url: http://localhost:8000
+    description: 本机开发/部署（MVP 单机）
+
+tags:
+  - name: creators
+    description: 博主管理（四平台添加/删除/归组/启停）
+  - name: works
+    description: 作品与三件套状态、重试、手动分析、归类
+  - name: groups
+    description: 博主分组（手动，一博主一组）
+  - name: tags
+    description: 双层标签（大标签 big / 小标签 small）与检索
+  - name: unclassified
+    description: 待分类队列（P2 完整，P1 空态）
+  - name: lexicon
+    description: 词库系统（语义对齐抽帧驱动）
+  - name: health
+    description: 凭据/系统健康度
+  - name: monitor
+    description: 监控层手动触发
+  - name: wechat
+    description: 公众号导入（接口预留）
+
+security:
+  - bearerAuth: []
+
+paths:
+  # ==================== creators ====================
+  /api/v1/creators:
+    get:
+      tags: [creators]
+      summary: 博主列表（支持分组/平台/关键词过滤 + 分页）
+      operationId: listCreators
+      parameters:
+        - $ref: '#/components/parameters/GroupIdQuery'
+        - name: platform
+          in: query
+          required: false
+          schema: { $ref: '#/components/schemas/Platform' }
+        - name: q
+          in: query
+          required: false
+          description: 按博主名模糊搜索
+          schema: { type: string, maxLength: 100 }
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: 博主分页列表
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CreatorPage' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      tags: [creators]
+      summary: 添加博主（选平台 + 归组）
+      operationId: createCreator
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreatorCreate' }
+      responses:
+        '201':
+          description: 创建成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: '#/components/schemas/Envelope' }
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Creator' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/v1/creators/{creator_id}:
+    parameters:
+      - { $ref: '#/components/parameters/CreatorId' }
+    get:
+      tags: [creators]
+      summary: 博主详情（含最近作品摘要）
+      operationId: getCreator
+      responses:
+        '200':
+          description: 博主详情
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: '#/components/schemas/Envelope' }
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/CreatorDetail' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [creators]
+      summary: 修改博主（改名/换组/启停）
+      operationId: updateCreator
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreatorUpdate' }
+      responses:
+        '200':
+          description: 更新后博主
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: '#/components/schemas/Envelope' }
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Creator' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+    delete:
+      tags: [creators]
+      summary: 删除博主
+      operationId: deleteCreator
+      responses:
+        '200':
+          description: 删除成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: '#/components/schemas/Envelope' }
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          deleted: { type: boolean, example: true }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/creators/{creator_id}/works:
+    parameters:
+      - { $ref: '#/components/parameters/CreatorId' }
+    get:
+      tags: [creators, works]
+      summary: 博主作品列表 + 三件套状态
+      operationId: listCreatorWorks
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: 该博主作品分页
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: '#/components/schemas/Envelope' }
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/WorkPage' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ==================== works ====================
+  /api/v1/works:
+    get:
+      tags: [works]
+      summary: 作品库（多条件过滤 + 分页）
+      operationId: listWorks
+      parameters:
+        - $ref: '#/components/parameters/GroupIdQuery'
+        - name: creator_id
+          in: query
+          required: false
+          schema: { type: integer }
+        - name: tag
+          in: query
+          required: false
+          description: '标签名（不带 #），如 美联储'
+          schema: { type: string }
+        - name: platform
+          in: query
+          required: false
+          schema: { $ref: '#/components/schemas/Platform' }
+        - name: status
+          in: query
+          required: false
+          schema: { $ref: '#/components/schemas/WorkStatus' }
+        - name: source_type
+          in: query
+          required: false
+          schema: { $ref: '#/components/schemas/SourceType' }
+        - name: unclassified
+          in: query
+          required: false
+          description: true = 仅待分类（group_id 为空）
+          schema: { type: boolean }
+        - name: q
+          in: query
+          required: false
+          description: 标题模糊搜索
+          schema: { type: string, maxLength: 200 }
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: 作品分页
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: '#/components/schemas/Envelope' }
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/WorkPage' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/v1/works/{work_id}:
+    parameters:
+      - { $ref: '#/components/parameters/WorkId' }
+    get:
+      tags: [works]
+      summary: 作品详情（状态/标签/帧/路径）
+      operationId: getWork
+      responses:
+        '200':
+          description: 作品详情
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: '#/components/schemas/Envelope' }
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/WorkDetail' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/works/{work_id}/retry:
+    parameters:
+      - { $ref: '#/components/parameters/WorkId' }
+    post:
+      tags: [works]
+      summary: 单条重试（FAILED → QUEUED）
+      operationId: retryWork
+      responses:
+        '200':
+          description: 重试已入队
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: '#/components/schemas/Envelope' }
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Work' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /api/v1/works/{work_id}/analyze:
+    parameters:
+      - { $ref: '#/components/parameters/WorkId' }
+    post:
+      tags: [works]
+      summary: 手动触发 AI 笔记（对话手动入口，生成/刷新素材就绪清单）
+      operationId: analyzeWork
+      responses:
+        '200':
+          description: 已生成素材就绪清单，待 WorkBuddy 执行
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: '#/components/schemas/Envelope' }
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          note_pending: { type: boolean, example: true }
+                          pending_file: { type: string, example: workbuddy/pending/12-2026-08-22-xxx.json }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/works/{work_id}/classify:
+    parameters:
+      - { $ref: '#/components/parameters/WorkId' }
+    post:
+      tags: [works, unclassified]
+      summary: 待分类手动归类（设分组 + 标签，可选绑博主）；原子移动 media 与 Obsidian 双目录
+      operationId: classifyWork
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ClassifyRequest' }
+      responses:
+        '200':
+          description: 归类完成
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: '#/components/schemas/Envelope' }
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Work' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/v1/works/{work_id}/frames:
+    parameters:
+      - { $ref: '#/components/parameters/WorkId' }
+    get:
+      tags: [works]
+      summary: 关键帧列表（读取 frame_manifest.json）
+      operationId: listWorkFrames
+      responses:
+        '200':
+          description: 关键帧列表
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: '#/components/schemas/Envelope' }
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          semantic_aligned: { type: boolean, example: true }
+                          fallback: { type: boolean, example: false }
+                          items:
+                            type: array
+                            items: { $ref: '#/components/schemas/Frame' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ==================== groups ====================
+  /api/v1/groups:
+    get:
+      tags: [groups]
+      summary: 分组列表（含博主数）
+      operationId: listGroups
+      responses:
+        '200':
+          description: 分组列表
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: '#/components/schemas/Envelope' }
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          items:
+                            type: array
+                            items: { $ref: '#/components/schemas/Group' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      tags: [groups]
+      summary: 创建分组
+      operationId: createGroup
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/GroupCreate' }
+      responses:
+        '201':
+          description: 创建成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: '#/components/schemas/Envelope' }
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Group' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/v1/groups/{group_id}:
+    parameters:
+      - { $ref: '#/components/parameters/GroupId' }
+    patch:
+      tags: [groups]
+      summary: 重命名分组（仅影响后续作品目录）
+      operationId: renameGroup
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/GroupUpdate' }
+      responses:
+        '200':
+          description: 更新后分组
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: '#/components/schemas/Envelope' }
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Group' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+    delete:
+      tags: [groups]
+      summary: 删除分组（组内博主移入未分组，作品保留）
+      operationId: deleteGroup
+      responses:
+        '200':
+          description: 删除成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: '#/components/schemas/Envelope' }
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          deleted: { type: boolean, example: true }
+                          moved_creators: { type: integer, example: 3 }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  # ==================== tags ====================
+  /api/v1/tags:
+    get:
+      tags: [tags]
+      summary: 标签列表（含作品数，可过滤大/小标签）
+      operationId: listTags
+      parameters:
+        - name: kind
+          in: query
+          required: false
+          schema: { $ref: '#/components/schemas/TagKind' }
+      responses:
+        '200':
+          description: 标签列表
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: '#/components/schemas/Envelope' }
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          items:
+                            type: array
+                            items: { $ref: '#/components/schemas/Tag' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/v1/tags/{tag_name}/works:
+    parameters:
+      - name: tag_name
+        in: path
+        required: true
+        description: '标签名（不带 #）'
+        schema: { type: string }
+    get:
+      tags: [tags]
+      summary: 按标签查作品（标签检索入口）
+      operationId: listWorksByTag
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: 该标签下作品分页
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: '#/components/schemas/Envelope' }
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/WorkPage' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ==================== unclassified ====================
+  /api/v1/unclassified:
+    get:
+      tags: [unclassified]
+      summary: 待分类队列（group_id 为空的未归类作品池）
+      operationId: listUnclassified
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: 待分类作品分页
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: '#/components/schemas/Envelope' }
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/WorkPage' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  # ==================== lexicon ====================
+  /api/v1/lexicon:
+    get:
+      tags: [lexicon]
+      summary: 词库词条列表
+      operationId: listLexicon
+      responses:
+        '200':
+          description: 词条列表
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: '#/components/schemas/Envelope' }
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          items:
+                            type: array
+                            items: { $ref: '#/components/schemas/LexiconItem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      tags: [lexicon]
+      summary: 新增词条
+      operationId: createLexiconEntry
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LexiconCreate' }
+      responses:
+        '201':
+          description: 创建成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: '#/components/schemas/Envelope' }
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/LexiconItem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/v1/lexicon/{entry_id}:
+    parameters:
+      - name: entry_id
+        in: path
+        required: true
+        schema: { type: integer }
+    patch:
+      tags: [lexicon]
+      summary: 修改词条（词/动作/权重/启停）
+      operationId: updateLexiconEntry
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LexiconUpdate' }
+      responses:
+        '200':
+          description: 更新后词条
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: '#/components/schemas/Envelope' }
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/LexiconItem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+    delete:
+      tags: [lexicon]
+      summary: 删除词条（删除后不再触发抽帧）
+      operationId: deleteLexiconEntry
+      responses:
+        '200':
+          description: 删除成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: '#/components/schemas/Envelope' }
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          deleted: { type: boolean, example: true }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ==================== health ====================
+  /api/v1/health/cookie:
+    get:
+      tags: [health]
+      summary: 凭据健康度（各平台 OK/WARN/NEEDS_RELOGIN + 最近轮询时间）
+      operationId: getCookieHealth
+      responses:
+        '200':
+          description: 凭据健康列表
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: '#/components/schemas/Envelope' }
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          items:
+                            type: array
+                            items: { $ref: '#/components/schemas/CookieHealth' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/v1/health/system:
+    get:
+      tags: [health]
+      summary: 系统健康（RSSHub/changedetection/下载器/转写引擎在线状态）
+      operationId: getSystemHealth
+      responses:
+        '200':
+          description: 系统健康列表
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: '#/components/schemas/Envelope' }
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          items:
+                            type: array
+                            items: { $ref: '#/components/schemas/SystemHealth' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  # ==================== monitor ====================
+  /api/v1/monitor/poll:
+    post:
+      tags: [monitor]
+      summary: 手动触发轮询（立即检测新作品，可指定平台）
+      operationId: triggerPoll
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                platform:
+                  description: 不传则全部平台
+                  schema: { $ref: '#/components/schemas/Platform' }
+      responses:
+        '200':
+          description: 轮询已触发
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: '#/components/schemas/Envelope' }
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          triggered: { type: boolean, example: true }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '503': { $ref: '#/components/responses/MonitorOffline' }
+
+  # ==================== wechat (预留) ====================
+  /api/v1/wechat/import:
+    post:
+      tags: [wechat]
+      summary: 公众号导入（接口预留占位，P1 返回 501）
+      operationId: wechatImport
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/WechatImportRequest' }
+      responses:
+        '501': { $ref: '#/components/responses/NotImplemented' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: '管理口令（ADMIN_TOKEN），形如 Authorization: Bearer <ADMIN_TOKEN>'
+
+  parameters:
+    CreatorId:
+      name: creator_id
+      in: path
+      required: true
+      schema: { type: integer, minimum: 1 }
+    WorkId:
+      name: work_id
+      in: path
+      required: true
+      schema: { type: integer, minimum: 1 }
+    GroupId:
+      name: group_id
+      in: path
+      required: true
+      schema: { type: integer, minimum: 1 }
+    GroupIdQuery:
+      name: group_id
+      in: query
+      required: false
+      schema: { type: integer, minimum: 1 }
+    Page:
+      name: page
+      in: query
+      required: false
+      schema: { type: integer, minimum: 1, default: 1 }
+    Limit:
+      name: limit
+      in: query
+      required: false
+      schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+
+  schemas:
+    Envelope:
+      type: object
+      description: 统一响应包装。code=0 成功；非 0 为业务错误码（见 SPEC §4.1）
+      required: [code, data, message]
+      properties:
+        code:
+          type: integer
+          example: 0
+        data: {}
+        message:
+          type: string
+          example: ''
+
+    Platform:
+      type: string
+      enum: [douyin, bilibili, xhs, twitter, wechat]
+      description: 平台标识（wechat 仅预留）
+
+    WorkStatus:
+      type: string
+      enum: [NEW, QUEUED, DOWNLOADING, TRANSCRIBING, FRAME_EXTRACTING, NOTE_GENERATING, DONE, FAILED, UNCLASSIFIED]
+
+    SourceType:
+      type: string
+      enum: [monitor, like, favorite, manual]
+
+    TagKind:
+      type: string
+      enum: [big, small]
+
+    # ---------- creators ----------
+    CreatorCreate:
+      type: object
+      required: [platform, name, profile_url, external_id]
+      properties:
+        platform: { $ref: '#/components/schemas/Platform' }
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        profile_url:
+          type: string
+          format: uri
+        external_id:
+          type: string
+          description: sec_uid / uid / user_id / handle
+          minLength: 1
+          maxLength: 200
+        group_id:
+          type: integer
+          nullable: true
+          description: 为空则博主暂不归组
+
+    CreatorUpdate:
+      type: object
+      description: 部分字段更新
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        group_id:
+          type: integer
+          nullable: true
+        enabled:
+          type: boolean
+
+    Creator:
+      type: object
+      required: [id, platform, name, profile_url, external_id, enabled]
+      properties:
+        id: { type: integer }
+        group_id: { type: integer, nullable: true }
+        platform: { $ref: '#/components/schemas/Platform' }
+        name: { type: string }
+        profile_url: { type: string }
+        external_id: { type: string }
+        enabled: { type: boolean }
+        last_poll_at: { type: string, format: date-time, nullable: true }
+        last_work_at: { type: string, format: date-time, nullable: true }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    CreatorDetail:
+      allOf:
+        - { $ref: '#/components/schemas/Creator' }
+        - type: object
+          properties:
+            recent_works:
+              type: array
+              description: 最近作品摘要（≤5 条）
+              items: { $ref: '#/components/schemas/WorkSummary' }
+
+    CreatorPage:
+      type: object
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/Creator' }
+        total: { type: integer }
+        page: { type: integer }
+        limit: { type: integer }
+        has_more: { type: boolean }
+
+    # ---------- works ----------
+    Work:
+      type: object
+      required: [id, platform, external_id, title, url, source_type, status]
+      properties:
+        id: { type: integer }
+        creator_id: { type: integer, nullable: true }
+        group_id: { type: integer, nullable: true, description: null = 待分类 }
+        platform: { $ref: '#/components/schemas/Platform' }
+        external_id: { type: string }
+        title: { type: string }
+        url: { type: string }
+        published_at: { type: string, format: date-time, nullable: true }
+        source_type: { $ref: '#/components/schemas/SourceType' }
+        status: { $ref: '#/components/schemas/WorkStatus' }
+        task_id: { type: string, nullable: true }
+        media_path: { type: string, nullable: true }
+        note_path: { type: string, nullable: true }
+        frame_count: { type: integer, default: 0 }
+        retry_count: { type: integer, default: 0 }
+        last_error: { type: string, nullable: true }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    WorkSummary:
+      type: object
+      properties:
+        id: { type: integer }
+        title: { type: string }
+        status: { $ref: '#/components/schemas/WorkStatus' }
+        published_at: { type: string, format: date-time, nullable: true }
+
+    WorkDetail:
+      allOf:
+        - { $ref: '#/components/schemas/Work' }
+        - type: object
+          properties:
+            tags:
+              type: array
+              items: { $ref: '#/components/schemas/Tag' }
+            stages:
+              type: array
+              description: 阶段级任务状态
+              items: { $ref: '#/components/schemas/TaskStage' }
+            transcript_path: { type: string, nullable: true }
+            frame_manifest_path: { type: string, nullable: true }
+
+    WorkPage:
+      type: object
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/Work' }
+        total: { type: integer }
+        page: { type: integer }
+        limit: { type: integer }
+        has_more: { type: boolean }
+
+    TaskStage:
+      type: object
+      properties:
+        stage:
+          type: string
+          enum: [parse, download, transcribe, frames, note]
+        status:
+          type: string
+          enum: [pending, running, succeeded, failed]
+        attempts: { type: integer }
+        error: { type: string, nullable: true }
+
+    ClassifyRequest:
+      type: object
+      required: [group_id]
+      properties:
+        group_id: { type: integer, minimum: 1 }
+        tags:
+          type: array
+          description: '确认/新增标签名（不带 #）'
+          items: { type: string, maxLength: 50 }
+        creator_id:
+          type: integer
+          nullable: true
+          description: 可选绑定博主（点赞收藏作品元数据可提供作者）
+
+    Frame:
+      type: object
+      properties:
+        file: { type: string, example: 'frames/frame_0001.jpg' }
+        time_seconds: { type: number, format: float }
+        window_start: { type: number, format: float, nullable: true }
+        window_end: { type: number, format: float, nullable: true }
+        hits:
+          type: array
+          items:
+            type: object
+            properties:
+              term: { type: string }
+              action: { type: string, enum: [increase, decrease] }
+              weight: { type: number, format: float }
+        confidence: { type: number, format: float }
+
+    # ---------- groups ----------
+    GroupCreate:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 50
+          description: 分组名（如 财经）
+
+    GroupUpdate:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 50
+
+    Group:
+      type: object
+      required: [id, name]
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        creator_count: { type: integer, default: 0 }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    # ---------- tags ----------
+    Tag:
+      type: object
+      required: [id, name, kind]
+      properties:
+        id: { type: integer }
+        name: { type: string, description: '不带 #，展示时加 #' }
+        kind: { $ref: '#/components/schemas/TagKind' }
+        work_count: { type: integer, default: 0 }
+
+    # ---------- lexicon ----------
+    LexiconCreate:
+      type: object
+      required: [term, action]
+      properties:
+        term:
+          type: string
+          minLength: 1
+          maxLength: 50
+        action:
+          type: string
+          enum: [increase, decrease]
+          description: increase=增加关键帧 / decrease=减少关键帧
+        weight:
+          type: number
+          format: float
+          default: 1.0
+        enabled:
+          type: boolean
+          default: true
+        platform_scope:
+          type: string
+          nullable: true
+          description: 预留：null=全平台生效
+
+    LexiconUpdate:
+      type: object
+      properties:
+        term: { type: string, minLength: 1, maxLength: 50 }
+        action: { type: string, enum: [increase, decrease] }
+        weight: { type: number, format: float }
+        enabled: { type: boolean }
+        platform_scope: { type: string, nullable: true }
+
+    LexiconItem:
+      type: object
+      required: [id, term, action, weight, enabled]
+      properties:
+        id: { type: integer }
+        term: { type: string }
+        action: { type: string, enum: [increase, decrease] }
+        weight: { type: number, format: float }
+        enabled: { type: boolean }
+        platform_scope: { type: string, nullable: true }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    # ---------- health ----------
+    CookieHealth:
+      type: object
+      required: [platform, status]
+      properties:
+        platform: { $ref: '#/components/schemas/Platform' }
+        status:
+          type: string
+          enum: [OK, WARN, NEEDS_RELOGIN, UNKNOWN]
+        last_checked_at: { type: string, format: date-time, nullable: true }
+        expires_at: { type: string, format: date-time, nullable: true }
+        note: { type: string, nullable: true }
+
+    SystemHealth:
+      type: object
+      required: [component, status]
+      properties:
+        component:
+          type: string
+          enum: [aggregator, monitor, rsshub, changedetection, downloader, transcriber, workbuddy_pending]
+        status:
+          type: string
+          enum: [online, offline, degraded, unknown]
+        detail: { type: string, nullable: true }
+
+    # ---------- wechat ----------
+    WechatImportRequest:
+      type: object
+      required: [url]
+      properties:
+        url: { type: string, format: uri }
+        title: { type: string, nullable: true }
+
+  responses:
+    Unauthorized:
+      description: 未认证 / token 缺失或错误
+      content:
+        application/json:
+          schema:
+            allOf:
+              - { $ref: '#/components/schemas/Envelope' }
+              - type: object
+                properties:
+                  code: { type: integer, example: 401 }
+                  message: { type: string, example: 'AUTH_REQUIRED' }
+    NotFound:
+      description: 资源不存在
+      content:
+        application/json:
+          schema:
+            allOf:
+              - { $ref: '#/components/schemas/Envelope' }
+              - type: object
+                properties:
+                  code: { type: integer, example: 404 }
+                  message: { type: string, example: 'NOT_FOUND' }
+    Conflict:
+      description: 冲突（重复创建/非法状态迁移）
+      content:
+        application/json:
+          schema:
+            allOf:
+              - { $ref: '#/components/schemas/Envelope' }
+              - type: object
+                properties:
+                  code: { type: integer, example: 409 }
+                  message: { type: string, example: 'CONFLICT' }
+    ValidationError:
+      description: 参数校验失败
+      content:
+        application/json:
+          schema:
+            allOf:
+              - { $ref: '#/components/schemas/Envelope' }
+              - type: object
+                properties:
+                  code: { type: integer, example: 422 }
+                  message: { type: string, example: 'VALIDATION_ERROR' }
+    MonitorOffline:
+      description: 监控层离线
+      content:
+        application/json:
+          schema:
+            allOf:
+              - { $ref: '#/components/schemas/Envelope' }
+              - type: object
+                properties:
+                  code: { type: integer, example: 1002 }
+                  message: { type: string, example: 'MONITOR_OFFLINE' }
+    NotImplemented:
+      description: 功能未实现（预留占位）
+      content:
+        application/json:
+          schema:
+            allOf:
+              - { $ref: '#/components/schemas/Envelope' }
+              - type: object
+                properties:
+                  code: { type: integer, example: 501 }
+                  message: { type: string, example: 'NOT_IMPLEMENTED' }

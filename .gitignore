@@ -1,0 +1,38 @@
+# 敏感文件 - 绝不提交
+*.env
+.env
+.env.*
+!*.env.example
+.cookies.json
+config/cookies.json
+tools/dy_profile/
+tools/_tmp_ck/
+tools/config/
+
+# 数据与媒体
+aggregator.db
+*.db
+media/
+Obsidian/
+workbuddy/pending/
+workbuddy/triggers/
+workbuddy/monitor_heartbeat.json
+
+# 依赖与构建
+node_modules/
+dist/
+__pycache__/
+*.pyc
+venv/
+.venv/
+
+# 测试产物
+media/_e2e/
+media/_test_*/
+
+# IDE
+.idea/
+.vscode/
+
+# 内部记忆
+.workbuddy/

@@ -1,0 +1,225 @@
+"""监控层任务：心跳、轮询、trigger 消费、可选流水线执行。"""
+from __future__ import annotations
+
+import json
+import logging
+import os
+import time
+from pathlib import Path
+
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+# 先导入 shared_db（把 backend 加入 sys.path），再导入 app.* 与 monitor.*
+from monitor.store.shared_db import SessionLocal, settings  # noqa: E402
+
+from app.models import Creator, Work  # noqa: E402
+from app.repositories import health_repo, lexicon_repo, task_repo, work_repo  # noqa: E402
+from app.utils.filename import sanitize_filename  # noqa: E402
+from app.utils.timeutil import now_iso, to_date  # noqa: E402
+
+from monitor.pipeline import download, frames, notify, transcribe  # noqa: E402
+from monitor.pipeline.download import PipelineOfflineError  # noqa: E402
+from monitor.platforms.douyin_cdp import DouyinCDPSession  # noqa: E402
+from monitor.platforms.rsshub import RSSHubError, RSSHubRouterAdapter  # noqa: E402
+
+logger = logging.getLogger("monitor.jobs")
+
+RSSHUB_PLATFORMS = ("bilibili", "xhs", "twitter")
+
+
+def write_heartbeat() -> None:
+    """写心跳文件：聚合 API 依据其新鲜度判断监控层在线。"""
+    settings.workbuddy_dir.mkdir(parents=True, exist_ok=True)
+    settings.monitor_heartbeat_file.write_text(
+        json.dumps({"ts": time.time(), "pid": os.getpid()}), encoding="utf-8"
+    )
+
+
+def _update_cookie(db: Session, platform: str, status: str, note: str | None) -> None:
+    health_repo.upsert_cookie(db, platform, status, note=note, last_checked_at=now_iso())
+
+
+def poll_rsshub_platform(platform: str) -> None:
+    """单平台轮询：拉取启用博主 → 增量 upsert 新作品 → 登记 parse 任务。"""
+    adapter = RSSHubRouterAdapter(settings.rsshub_base_url)
+    if not adapter.is_configured():
+        logger.warning("RSSHUB_BASE_URL 未配置，跳过 %s 轮询", platform)
+        return
+    started = now_iso()
+    with SessionLocal() as db:
+        creators = db.execute(
+            select(Creator).where(Creator.platform == platform, Creator.enabled == 1)
+        ).scalars().all()
+        for creator in creators:
+            try:
+                entries = adapter.fetch_entries(platform, creator.external_id)
+            except RSSHubError as exc:
+                _update_cookie(db, platform, "WARN", exc.message)
+                health_repo.create_poll_log(db, platform, "fail", detail=exc.category, started_at=started)
+                db.commit()
+                logger.warning("%s 轮询失败 category=%s msg=%s", platform, exc.category, exc.message)
+                continue
+            new_count = 0
+            for item in entries:
+                work = work_repo.upsert(
+                    db,
+                    item["platform"],
+                    item["external_id"],
+                    title=item["title"],
+                    url=item["url"],
+                    published_at=item.get("published_at"),
+                    creator_id=creator.id,
+                    source_type="monitor",
+                )
+                if work.status == "NEW":
+                    new_count += 1
+                    task_repo.upsert(db, work.id, "parse", "pending")
+                    work.status = "QUEUED"
+                    creator.last_work_at = now_iso()
+            creator.last_poll_at = now_iso()
+            db.commit()
+            if new_count:
+                logger.info("%s 博主 %s 新增 %d 条", platform, creator.name, new_count)
+        _update_cookie(db, platform, "OK", None)
+        health_repo.create_poll_log(db, platform, "ok", detail=None, started_at=started)
+        db.commit()
+
+
+def poll_douyin() -> None:
+    """抖音 CDP 占位轮询（可配置开关，K1 间隔默认 ≥10min）。"""
+    session = DouyinCDPSession(settings.douyin_cdp_enabled, settings.douyin_cdp_profile_dir)
+    status = session.check()
+    with SessionLocal() as db:
+        _update_cookie(db, "douyin", status["status"], status["note"])
+        if status["status"] != "OK":
+            db.commit()
+            return
+        creators = db.execute(
+            select(Creator).where(Creator.platform == "douyin", Creator.enabled == 1)
+        ).scalars().all()
+        for creator in creators:
+            entries = session.poll_creator(creator)
+            for item in entries:
+                work = work_repo.upsert(
+                    db, "douyin", item["external_id"],
+                    title=item["title"], url=item["url"],
+                    published_at=item.get("published_at"),
+                    creator_id=creator.id, source_type="monitor",
+                )
+                if work.status == "NEW":
+                    task_repo.upsert(db, work.id, "parse", "pending")
+                    work.status = "QUEUED"
+                    creator.last_work_at = now_iso()
+            creator.last_poll_at = now_iso()
+            db.commit()
+
+
+def consume_triggers() -> None:
+    """消费聚合 API /monitor/poll 写下的 trigger 文件，处理完即删除。"""
+    trigger_dir: Path = settings.trigger_dir
+    if not trigger_dir.exists():
+        return
+    for path in sorted(trigger_dir.glob("poll-*.json")):
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            path.unlink(missing_ok=True)
+            continue
+        platform = payload.get("platform")
+        if platform:
+            if platform in RSSHUB_PLATFORMS:
+                poll_rsshub_platform(platform)
+            elif platform == "douyin":
+                poll_douyin()
+            else:
+                logger.warning("未知平台 trigger: %s", platform)
+        else:
+            for p in RSSHUB_PLATFORMS:
+                poll_rsshub_platform(p)
+            poll_douyin()
+        path.unlink(missing_ok=True)
+
+
+def _work_media_dir(work) -> Path:
+    """计算媒体目录 media/{分组}/{博主}/{日期}-{标题}/（SPEC §8 命名规则）。"""
+    group = work.group.name if work.group else "未分组"
+    creator = work.creator.name if work.creator else work.external_id
+    date = to_date(work.published_at) or to_date(work.created_at) or "unknown"
+    rel = Path(sanitize_filename(group)) / sanitize_filename(creator) / f"{date}-{sanitize_filename(work.title)}"
+    return settings.media_root / rel
+
+
+def run_pipeline() -> None:
+    """处理 NEW/QUEUED 作品：下载→转写→抽帧→素材就绪清单；失败落 FAILED 可重试（AC-8）。"""
+    if not settings.monitor_run_pipeline:
+        return
+    with SessionLocal() as db:
+        works = db.execute(
+            select(Work).where(Work.status.in_(["NEW", "QUEUED"])).order_by(Work.id).limit(10)
+        ).scalars().all()
+        for work in works:
+            try:
+                _process_work(db, work)
+                db.commit()
+            except PipelineOfflineError as exc:
+                work.status = "FAILED"
+                work.last_error = str(exc)
+                task_repo.mark_failed(db, work.id, "download", str(exc))
+                db.commit()
+                logger.warning("work %s 流水线离线: %s", work.id, exc)
+            except Exception as exc:  # noqa: BLE001
+                work.status = "FAILED"
+                work.last_error = str(exc)
+                task_repo.mark_failed(db, work.id, "pipeline", str(exc))
+                db.commit()
+                logger.exception("work %s 流水线异常", work.id)
+
+
+def _process_work(db: Session, work) -> None:
+    """单作品五步流水线：下载→转写→语义抽帧→素材就绪清单。"""
+    media_dir = _work_media_dir(work)
+    video_path = download.download(work.platform, work.url, media_dir)
+    work.status = "DOWNLOADING"
+    work.media_path = str(media_dir.relative_to(settings.media_root)).replace("\\", "/")
+    task_repo.upsert(db, work.id, "download", "succeeded", attempts=1)
+
+    work.status = "TRANSCRIBING"
+    transcript_dir = media_dir / "transcript"
+    transcript_path = transcribe.transcribe(video_path, transcript_dir)
+    work.transcript_path = str(Path(transcript_path).relative_to(settings.media_root)).replace("\\", "/")
+    task_repo.upsert(db, work.id, "transcribe", "succeeded", attempts=1)
+
+    work.status = "FRAME_EXTRACTING"
+    frames_dir = media_dir / "frames"
+    entries = [
+        {"term": e.term, "action": e.action, "weight": e.weight, "enabled": bool(e.enabled)}
+        for e in lexicon_repo.list_entries(db)
+        if e.enabled
+    ]
+    segments = _load_segments(work.transcript_path)
+    windows = frames.match_windows(segments, entries) if segments else []
+    extracted = frames.extract_frames(video_path, windows, frames_dir)
+    manifest_path = frames.write_manifest(work.id, extracted, frames_dir)
+    work.frame_manifest_path = str(manifest_path.relative_to(settings.media_root)).replace("\\", "/")
+    task_repo.upsert(db, work.id, "frames", "succeeded", attempts=1)
+
+    work.status = "NOTE_GENERATING"
+    notify.notify_ready(db, work)
+
+
+def _load_segments(transcript_rel: str | None) -> list[dict]:
+    """读取带时间戳转写稿 [{start,end,text}]；损坏/空返回 []（K15 空文本降级）。"""
+    if not transcript_rel:
+        return []
+    path = settings.media_root / transcript_rel
+    if not path.exists():
+        return []
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    if isinstance(payload, list):
+        return payload
+    segments = payload.get("segments")
+    return segments if isinstance(segments, list) else []
