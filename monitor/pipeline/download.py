@@ -1,7 +1,7 @@
-"""流水线·下载：按平台路由 CLI 下载器（最低画质，许可证进程隔离 K11/K12）。
+"""流水线·下载：按平台路由 CLI 下载器（最低可用画质，许可证进程隔离 K11/K12）。
 
 平台路由（SPEC ADR-004 + 本项目下载层设计）：
-  douyin   -> jiji262/douyin-downloader（主路径，video_quality=lowest）
+  douyin   -> jiji262/douyin-downloader（主路径，video_quality=480p，见 _ensure_jiji_config）
   bilibili -> yutto（多清晰度，360p 最低）
   xhs      -> XHS-Downloader（GPL 子进程）
   twitter  -> yt-dlp（-f worst 最低画质）
@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -31,6 +32,45 @@ def _find_video(media_dir: Path) -> str:
         if f.suffix.lower() in (".mp4", ".mov", ".mkv", ".flv", ".webm"):
             return str(f)
     raise PipelineOfflineError("下载完成但未找到视频文件")
+
+
+# 抖音 jiji262 画质档位。实测：lowest 档无音轨（仅 HEVC 视频流）→ 转写失败；
+# 480p 含 AAC 128kbps 音轨，为最低可用档（端到端实测结论，替代 lowest）。
+_JIJI_VIDEO_QUALITY = "480p"
+_JIJI_QUALITY_NOTE = (
+    "# 注意：lowest 档无音轨（实测仅 HEVC 视频流），480p 为最低可用档（含 AAC 音轨）\n"
+)
+
+
+def _ensure_jiji_config(cfg: Path) -> None:
+    """生成/更新 jiji262 config.yml，保证 video_quality=480p。
+
+    实测结论：lowest 无音轨 → 下游转写必然失败；480p 含 AAC 128kbps 音轨，
+    是满足"省流量 + 可转写"的最低可用档。已存在的 lowest 配置就地升级为 480p。
+    """
+    if not cfg.exists():
+        cfg.write_text(
+            _JIJI_QUALITY_NOTE
+            + f"video_quality: {_JIJI_VIDEO_QUALITY}\n"
+            + "thread: 3\n"
+            + "retry_times: 3\n"
+            + "progress:\n"
+            + "  quiet_logs: true\n",
+            encoding="utf-8",
+        )
+        logger.info("生成 jiji262 配置: %s (video_quality=%s)", cfg, _JIJI_VIDEO_QUALITY)
+        return
+    text = cfg.read_text(encoding="utf-8")
+    if re.search(r"^video_quality:\s*lowest\s*$", text, re.M):
+        text = re.sub(r"^video_quality:\s*lowest\s*$", f"video_quality: {_JIJI_VIDEO_QUALITY}", text, flags=re.M)
+        cfg.write_text(text, encoding="utf-8")
+        logger.info("jiji262 配置升级 lowest -> %s: %s", _JIJI_VIDEO_QUALITY, cfg)
+    elif "video_quality:" not in text:
+        # 已有配置缺质量项：在头部显式补 480p（含注释，避免后续误改回 lowest）
+        cfg.write_text(_JIJI_QUALITY_NOTE + f"video_quality: {_JIJI_VIDEO_QUALITY}\n" + text, encoding="utf-8")
+        logger.info("jiji262 配置补充 video_quality=%s: %s", _JIJI_VIDEO_QUALITY, cfg)
+    else:
+        logger.info("jiji262 配置已含 video_quality，跳过更新: %s", cfg)
 
 
 # ---------------------------------------------------------------
@@ -76,7 +116,7 @@ def download_via_mediacrawler(platform: str, target: str, out_dir: Path) -> str:
 
 
 def download(platform: str, url: str, media_dir: Path) -> str:
-    """下载最低画质视频，返回视频文件绝对路径。引擎缺失抛 PipelineOfflineError。"""
+    """下载最低可用画质视频，返回视频文件绝对路径。引擎缺失抛 PipelineOfflineError。"""
     media_dir.mkdir(parents=True, exist_ok=True)
     if platform == "douyin":
         # jiji262/douyin-downloader：python run.py -c config.yml -u <url> -p <out>
@@ -84,12 +124,7 @@ def download(platform: str, url: str, media_dir: Path) -> str:
         if not jiji_dir:
             raise PipelineOfflineError("抖音下载器 jiji262 未配置（DOUYIN_DOWNLOADER_DIR）")
         cfg = Path(jiji_dir) / "config.yml"
-        if not cfg.exists():
-            # 生成最小配置（video_quality=lowest 省流量）
-            cfg.write_text(
-                "video_quality: lowest\nthread: 3\nretry_times: 3\nprogress:\n  quiet_logs: true\n",
-                encoding="utf-8",
-            )
+        _ensure_jiji_config(cfg)
         subprocess.run(
             [
                 "C:/Users/Administrator/.workbuddy/binaries/python/versions/3.13.12/python.exe",

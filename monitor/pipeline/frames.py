@@ -2,6 +2,10 @@
 
 K20：同窗多词条、增删矛盾 → 取权重净额，冲突写日志。
 无时间戳/空文本降级由上层处理（fallback 标记）。
+
+segments 契约：[{start, end, text}]（秒）。paraformer-zh 的 segments 即此形状；
+若退化单段（transcript 标注 timestamps: none），match_windows 用 start/end 默认值兜底不报错。
+extract_frames 入口同样做 ASCII 路径规范化（与转写同根因：中文/空格/问号路径 ffmpeg 失败）。
 """
 from __future__ import annotations
 
@@ -10,11 +14,17 @@ import logging
 import subprocess
 from pathlib import Path
 
+from monitor.pipeline.paths import ensure_ascii_work_copy
+
 logger = logging.getLogger("monitor.pipeline.frames")
 
 
 def match_windows(segments: list[dict], entries: list[dict]) -> list[dict]:
-    """segments: [{start, end, text}]；entries: [{term, action, weight, enabled}] → 重点窗口。"""
+    """segments: [{start, end, text}]；entries: [{term, action, weight, enabled}] → 重点窗口。
+
+    - paraformer 句级 segments 直接消费（[{start,end,text}]，start/end 单位为秒）
+    - 退化单段（无 start/end）时用默认值兜底，不抛错（K15 降级）
+    """
     windows = []
     for seg in segments:
         text = (seg.get("text") or "").strip()
@@ -30,8 +40,14 @@ def match_windows(segments: list[dict], entries: list[dict]) -> list[dict]:
                     {"term": term, "action": entry.get("action", "increase"), "weight": entry.get("weight", 1.0)}
                 )
         if hits:
-            start = float(seg.get("start", 0.0))
-            end = float(seg.get("end", start + 1.0))
+            try:
+                start = float(seg.get("start", 0.0))
+            except (TypeError, ValueError):
+                start = 0.0
+            try:
+                end = float(seg.get("end", start + 1.0))
+            except (TypeError, ValueError):
+                end = start + 1.0
             windows.append({"start": start, "end": end, "hits": hits})
     return windows
 
@@ -47,7 +63,12 @@ def _frame_count_for_window(window: dict) -> int:
 
 
 def extract_frames(video_path: str, windows: list[dict], out_dir: Path) -> list[dict]:
-    """ffmpeg 抽帧：每窗口默认 1 帧，increase 按权重增帧 / decrease 减帧（下限 1）。"""
+    """ffmpeg 抽帧：每窗口默认 1 帧，increase 按权重增帧 / decrease 减帧（下限 1）。
+
+    路径规范化：中文/空格/问号路径先复制到 media/_work/{hash}/ 再喂 ffmpeg
+    （与转写同根因，规避 Windows 子进程非 ASCII 路径失败）。
+    """
+    work_path, _ = ensure_ascii_work_copy(video_path)
     out_dir.mkdir(parents=True, exist_ok=True)
     frames = []
     idx = 1
@@ -58,7 +79,7 @@ def extract_frames(video_path: str, windows: list[dict], out_dir: Path) -> list[
             t = window["start"] + span * (k + 0.5) / count
             name = f"frame_{idx:04d}.jpg"
             result = subprocess.run(
-                ["ffmpeg", "-y", "-ss", f"{t:.3f}", "-i", video_path, "-frames:v", "1", "-q:v", "3", str(out_dir / name)],
+                ["ffmpeg", "-y", "-ss", f"{t:.3f}", "-i", work_path, "-frames:v", "1", "-q:v", "3", str(out_dir / name)],
                 capture_output=True,
             )
             if result.returncode == 0:
