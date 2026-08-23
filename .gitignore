@@ -36,3 +36,7 @@ media/_test_*/
 
 # 内部记忆
 .workbuddy/
+
+# 第三方工具源码（git clone 安装，勿入库）
+tools/douyin-downloader/
+tools/xhs-downloader/
