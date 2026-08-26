@@ -1,0 +1,225 @@
+{
+  "note": null,
+  "stats": {
+    "评论总数": 104,
+    "父评论": 12,
+    "子评论回复": 92,
+    "唯一用户数": 36,
+    "图片评论数": 5,
+    "最高点赞": 10,
+    "IP属地分布": {
+      "上海": 29,
+      "江苏": 14,
+      "浙江": 9,
+      "湖北": 7,
+      "安徽": 7,
+      "广东": 6,
+      "湖南": 5,
+      "云南": 3,
+      "黑龙江": 3,
+      "北京": 3,
+      "陕西": 2,
+      "山东": 2,
+      "河南": 1,
+      "德国": 1
+    },
+    "首条评论时间": "2026-08-06 14:10",
+    "末条评论时间": "2026-08-25 21:13",
+    "关键词TOP": [
+      [
+        "老师",
+        24
+      ],
+      [
+        "可以",
+        20
+      ],
+      [
+        "谢谢",
+        12
+      ],
+      [
+        "纳指",
+        11
+      ],
+      [
+        "标普",
+        11
+      ],
+      [
+        "的话",
+        10
+      ],
+      [
+        "一下",
+        9
+      ],
+      [
+        "场内",
+        8
+      ],
+      [
+        "推荐",
+        7
+      ],
+      [
+        "一个",
+        7
+      ]
+    ]
+  },
+  "pinned_comment": {
+    "comment_id": "6a75712f00000000290185bd",
+    "create_time": 1786081583000,
+    "note_id": "6a7421670000000025007f23",
+    "content": "老师您好，可以再和您请教一下煤炭的打法吗？[哭惹R][哭惹R]昨天看到帖子但是没有记下来，今天想认真研究一下的时候已经没有了[哭惹R][哭惹R]",
+    "creator_hash": "d8cbec9d200490d3",
+    "nickname": "J***l",
+    "sub_comment_count": "8",
+    "pictures": "",
+    "parent_comment_id": "",
+    "last_modify_ts": 1787717538103,
+    "like_count": "0",
+    "ip_location": "云南"
+  },
+  "top_comments": [
+    {
+      "comment_id": "6a74256f00000000140230c6",
+      "create_time": 1785996655000,
+      "note_id": "6a7421670000000025007f23",
+      "content": "玩不来的话，直接长拿中国神华。还能当吃息佬[黄金薯R][黄金薯R]",
+      "creator_hash": "4dea5e44c87e3a66",
+      "nickname": "长***德",
+      "sub_comment_count": "12",
+      "pictures": "",
+      "parent_comment_id": "",
+      "last_modify_ts": 1787717538110,
+      "like_count": "10",
+      "ip_location": "上海"
+    },
+    {
+      "comment_id": "6a7426c00000000014021159",
+      "create_time": 1785996992000,
+      "note_id": "6a7421670000000025007f23",
+      "content": "哈哈，虽然我不玩煤，但也截图保存了，说不定哪天就用上了呢[偷笑R]就像我一年前啥也不懂跟风开了个证券账户，开户完就搁置了，自打关注了老师，我开始蹲场内纳指，随时准备转场内[笑哭R]",
+      "creator_hash": "02500bb777d12d6d",
+      "nickname": "敏***尔",
+      "sub_comment_count": "2",
+      "pictures": "",
+      "parent_comment_id": "",
+      "last_modify_ts": 1787717538108,
+      "like_count": "3",
+      "ip_location": "江苏"
+    },
+    {
+      "comment_id": "6a747355000000002b001c0c",
+      "create_time": 1786016598000,
+      "note_id": "6a7421670000000025007f23",
+      "content": "老师老师 国富全球推荐入吗 目前手里一天两百多的纳指和一百的标普500还有200嘉实美国定投，看这个额度有一千能不能买啊",
+      "creator_hash": "38cf7f87c3177772",
+      "nickname": "E***e",
+      "sub_comment_count": "8",
+      "pictures": "",
+      "parent_comment_id": "",
+      "last_modify_ts": 1787717538114,
+      "like_count": "2",
+      "ip_location": "江苏"
+    },
+    {
+      "comment_id": "6a75712f00000000290185bd",
+      "create_time": 1786081583000,
+      "note_id": "6a7421670000000025007f23",
+      "content": "老师您好，可以再和您请教一下煤炭的打法吗？[哭惹R][哭惹R]昨天看到帖子但是没有记下来，今天想认真研究一下的时候已经没有了[哭惹R][哭惹R]",
+      "creator_hash": "d8cbec9d200490d3",
+      "nickname": "J***l",
+      "sub_comment_count": "8",
+      "pictures": "",
+      "parent_comment_id": "",
+      "last_modify_ts": 1787717538103,
+      "like_count": "0",
+      "ip_location": "云南"
+    },
+    {
+      "comment_id": "6a743e84000000002a033961",
+      "create_time": 1786003077000,
+      "note_id": "6a7421670000000025007f23",
+      "content": "老师建议我玩这个还是玩标普纳指，",
+      "creator_hash": "7dfbcedef47a7faf",
+      "nickname": "咕***噜",
+      "sub_comment_count": "13",
+      "pictures": "",
+      "parent_comment_id": "",
+      "last_modify_ts": 1787717538110,
+      "like_count": "0",
+      "ip_location": "广东"
+    },
+    {
+      "comment_id": "6a74276d00000000290262b1",
+      "create_time": 1785997165000,
+      "note_id": "6a7421670000000025007f23",
+      "content": "老师今天煤炭涨了还能拿吗",
+      "creator_hash": "b663db4d0ee436d5",
+      "nickname": "黑***直",
+      "sub_comment_count": "11",
+      "pictures": "",
+      "parent_comment_id": "",
+      "last_modify_ts": 1787717538109,
+      "like_count": "0",
+      "ip_location": "陕西"
+    },
+    {
+      "comment_id": "6a74275c000000002a00572d",
+      "create_time": 1785997148000,
+      "note_id": "6a7421670000000025007f23",
+      "content": "银行银行呢[飞吻R]",
+      "creator_hash": "8a181e546000b69e",
+      "nickname": "利***尔",
+      "sub_comment_count": "10",
+      "pictures": "",
+      "parent_comment_id": "",
+      "last_modify_ts": 1787717538111,
+      "like_count": "0",
+      "ip_location": "浙江"
+    },
+    {
+      "comment_id": "6a7459f100000000030168bf",
+      "create_time": 1786010097000,
+      "note_id": "6a7421670000000025007f23",
+      "content": "你好 我想问一下我场内如果长持三到五年以上的话。日经好还是标普。 日经会不会套人",
+      "creator_hash": "6d48da9e6acc88b5",
+      "nickname": "西***茄",
+      "sub_comment_count": "5",
+      "pictures": "",
+      "parent_comment_id": "",
+      "last_modify_ts": 1787709501340,
+      "like_count": "0"
+    },
+    {
+      "comment_id": "6a747c79000000000203574d",
+      "create_time": 1786018939000,
+      "note_id": "6a7421670000000025007f23",
+      "content": "哥我想问一下我这些买的是不是都有问题[失望R]七月份全科技把奖学金赔进去了[哭惹R]想捞点回来",
+      "creator_hash": "bc1698bc4abaf709",
+      "nickname": "O***k",
+      "sub_comment_count": "5",
+      "pictures": "http://sns-webpic-qc.xhscdn.com/202608260958/82abafd33897b3a509e7038100104700/comment/1040g4b8323hee2ee6u705pdfdqhhouib8t9bhpg!nd_whgt34_webp_wm_1",
+      "parent_comment_id": "",
+      "last_modify_ts": 1787709501341,
+      "like_count": "0"
+    },
+    {
+      "comment_id": "6a74770f0000000014016e46",
+      "create_time": 1786017552000,
+      "note_id": "6a7421670000000025007f23",
+      "content": "老师，新手小白是不是推荐看《小懒财富自由之路》",
+      "creator_hash": "ef11637daa440a8d",
+      "nickname": "晚***常",
+      "sub_comment_count": "9",
+      "pictures": "",
+      "parent_comment_id": "",
+      "last_modify_ts": 1787717538113,
+      "like_count": "0",
+      "ip_location": "湖北"
+    }
+  ]
+}
