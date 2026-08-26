@@ -7,22 +7,6 @@
     "唯一用户数": 36,
     "图片评论数": 5,
     "最高点赞": 10,
-    "IP属地分布": {
-      "上海": 29,
-      "江苏": 14,
-      "浙江": 9,
-      "湖北": 7,
-      "安徽": 7,
-      "广东": 6,
-      "湖南": 5,
-      "云南": 3,
-      "黑龙江": 3,
-      "北京": 3,
-      "陕西": 2,
-      "山东": 2,
-      "河南": 1,
-      "德国": 1
-    },
     "首条评论时间": "2026-08-06 14:10",
     "末条评论时间": "2026-08-25 21:13",
     "关键词TOP": [
@@ -78,9 +62,8 @@
     "sub_comment_count": "8",
     "pictures": "",
     "parent_comment_id": "",
-    "last_modify_ts": 1787717538103,
-    "like_count": "0",
-    "ip_location": "云南"
+    "last_modify_ts": 1787709501333,
+    "like_count": "0"
   },
   "top_comments": [
     {
@@ -93,9 +76,8 @@
       "sub_comment_count": "12",
       "pictures": "",
       "parent_comment_id": "",
-      "last_modify_ts": 1787717538110,
-      "like_count": "10",
-      "ip_location": "上海"
+      "last_modify_ts": 1787709501338,
+      "like_count": "10"
     },
     {
       "comment_id": "6a7426c00000000014021159",
@@ -107,9 +89,8 @@
       "sub_comment_count": "2",
       "pictures": "",
       "parent_comment_id": "",
-      "last_modify_ts": 1787717538108,
-      "like_count": "3",
-      "ip_location": "江苏"
+      "last_modify_ts": 1787709501335,
+      "like_count": "3"
     },
     {
       "comment_id": "6a747355000000002b001c0c",
@@ -121,9 +102,8 @@
       "sub_comment_count": "8",
       "pictures": "",
       "parent_comment_id": "",
-      "last_modify_ts": 1787717538114,
-      "like_count": "2",
-      "ip_location": "江苏"
+      "last_modify_ts": 1787709501341,
+      "like_count": "2"
     },
     {
       "comment_id": "6a75712f00000000290185bd",
@@ -135,9 +115,8 @@
       "sub_comment_count": "8",
       "pictures": "",
       "parent_comment_id": "",
-      "last_modify_ts": 1787717538103,
-      "like_count": "0",
-      "ip_location": "云南"
+      "last_modify_ts": 1787709501333,
+      "like_count": "0"
     },
     {
       "comment_id": "6a743e84000000002a033961",
@@ -149,9 +128,8 @@
       "sub_comment_count": "13",
       "pictures": "",
       "parent_comment_id": "",
-      "last_modify_ts": 1787717538110,
-      "like_count": "0",
-      "ip_location": "广东"
+      "last_modify_ts": 1787709501336,
+      "like_count": "0"
     },
     {
       "comment_id": "6a74276d00000000290262b1",
@@ -163,9 +141,8 @@
       "sub_comment_count": "11",
       "pictures": "",
       "parent_comment_id": "",
-      "last_modify_ts": 1787717538109,
-      "like_count": "0",
-      "ip_location": "陕西"
+      "last_modify_ts": 1787709501338,
+      "like_count": "0"
     },
     {
       "comment_id": "6a74275c000000002a00572d",
@@ -177,9 +154,8 @@
       "sub_comment_count": "10",
       "pictures": "",
       "parent_comment_id": "",
-      "last_modify_ts": 1787717538111,
-      "like_count": "0",
-      "ip_location": "浙江"
+      "last_modify_ts": 1787709501339,
+      "like_count": "0"
     },
     {
       "comment_id": "6a7459f100000000030168bf",
@@ -217,9 +193,8 @@
       "sub_comment_count": "9",
       "pictures": "",
       "parent_comment_id": "",
-      "last_modify_ts": 1787717538113,
-      "like_count": "0",
-      "ip_location": "湖北"
+      "last_modify_ts": 1787709501342,
+      "like_count": "0"
     }
   ]
 }

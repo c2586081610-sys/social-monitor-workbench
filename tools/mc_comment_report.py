@@ -1,7 +1,7 @@
 """MediaCrawler 小红书评论 DIY 增强报告：对齐"易小红"的附带统计 + 层级导出。
 
 读 MediaCrawler 导出的 detail_comments_*.jsonl，输出：
-  1. 附带统计：评论总数/子评论数/唯一用户数/IP属地分布/图片评论数/点赞Top/首末评论时间/关键词TOP
+  1. 附带统计：评论总数/子评论数/唯一用户数/图片评论数/点赞Top/首末评论时间/关键词TOP
   2. 层级导出：父评论 + ┗ 回复 重组（按 parent_comment_id）
   3. 置顶识别：列表第一条 + 点赞非最高 → 置顶（第一性原理）
 输出: workbuddy/xhs_comment_report_{note_id}.md + .json
@@ -53,7 +53,7 @@ def keyword_top(comments: list[dict], top_n: int = 10) -> list[tuple[str, int]]:
 
 
 def dedup_comments(comments: list[dict]) -> list[dict]:
-    """按 comment_id 去重；同 id 保留 ip_location 非空/字段更全的那条（MediaCrawler 子评论分页可能重复落库）。"""
+    """按 comment_id 去重；同 id 保留字段更全的那条（MediaCrawler 子评论分页可能重复落库）。"""
     best: dict[str, dict] = {}
     for c in comments:
         cid = c.get("comment_id") or c.get("id") or ""
@@ -63,8 +63,7 @@ def dedup_comments(comments: list[dict]) -> list[dict]:
         if prev is None:
             best[cid] = c
             continue
-        score = lambda x: (1 if x.get("ip_location") else 0) + (1 if x.get("content") else 0)
-        if score(c) > score(prev):
+        if (1 if c.get("content") else 0) > (1 if prev.get("content") else 0):
             best[cid] = c
     return list(best.values())
 
@@ -75,8 +74,6 @@ def build_report(note: dict | None, comments: list[dict]) -> dict:
     subs = [c for c in comments if c.get("parent_comment_id")]
     users = {c.get("creator_hash") or c.get("nickname") for c in comments}
     with_pic = [c for c in comments if c.get("pictures")]
-    # IP 属地分布
-    ip_counter = Counter(c.get("ip_location", "未知") or "未知" for c in comments if c.get("ip_location"))
     # 首末时间
     times = [c.get("create_time") for c in comments if c.get("create_time")]
     # 点赞 Top（父评论内排序，置顶单独）
@@ -98,7 +95,6 @@ def build_report(note: dict | None, comments: list[dict]) -> dict:
             "唯一用户数": len(users),
             "图片评论数": len(with_pic),
             "最高点赞": max_like,
-            "IP属地分布": dict(ip_counter.most_common()),
             "首条评论时间": ts_to_str(min(times)) if times else "",
             "末条评论时间": ts_to_str(max(times)) if times else "",
             "关键词TOP": kw,
@@ -124,8 +120,6 @@ def to_markdown(rpt: dict) -> str:
         "| 属地 | 数量 |",
         "|------|------|",
     ]
-    for loc, cnt in stats["IP属地分布"].items():
-        lines.append(f"| {loc} | {cnt} |")
     if stats["关键词TOP"]:
         lines += ["", "## 评论关键词 TOP", "", "| 关键词 | 次数 |", "|--------|------|"]
         for w, c in stats["关键词TOP"]:
@@ -133,14 +127,14 @@ def to_markdown(rpt: dict) -> str:
     # 置顶
     if rpt.get("pinned_comment"):
         p = rpt["pinned_comment"]
-        lines += ["", "## 📌 置顶评论", "", f"> **{p.get('nickname','')}**（{p.get('ip_location','')}）：「{p.get('content','')}」"]
+        lines += ["", "## 📌 置顶评论", "", f"> **{p.get('nickname','')}**：「{p.get('content','')}」"]
     # Top 评论
     if rpt.get("top_comments"):
-        lines += ["", "## 点赞 TOP 评论", "", "| 点赞 | 昵称 | 属地 | 内容 | 回复数 | 图片 |", "|------|------|------|------|--------|------|"]
+        lines += ["", "## 点赞 TOP 评论", "", "| 点赞 | 昵称 | 内容 | 回复数 | 图片 |", "|------|------|------|--------|------|"]
         for c in rpt["top_comments"]:
             pics = "📷" if c.get("pictures") else ""
             lines.append(
-                f"| {c.get('like_count',0)} | {c.get('nickname','')} | {c.get('ip_location','')} | {(c.get('content') or '')[:40]} | {c.get('sub_comment_count',0)} | {pics} |"
+                f"| {c.get('like_count',0)} | {c.get('nickname','')} | {(c.get('content') or '')[:40]} | {c.get('sub_comment_count',0)} | {pics} |"
             )
     # 层级评论（父+回复）
     lines += ["", "## 评论层级（父评论 + 回复）", ""]
@@ -179,7 +173,6 @@ def main() -> int:
     s = rpt["stats"]
     print(f"报告已生成: {out_prefix.with_suffix('.md')}")
     print(f"  评论 {s['评论总数']}（父 {s['父评论']}/子 {s['子评论回复']}）｜唯一用户 {s['唯一用户数']}｜图片评论 {s['图片评论数']}｜最高赞 {s['最高点赞']}")
-    print(f"  IP属地: {dict(list(s['IP属地分布'].items())[:5])}")
     print(f"  关键词TOP: {[w for w,_ in s['关键词TOP'][:5]]}")
     return 0
 
