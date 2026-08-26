@@ -35,13 +35,18 @@
 **推荐**：**B 为主**（拦截原始 comment 响应，落盘 voice/pictures 完整字段），
 A 作为 MediaCrawler 抓取时的补充（patch store 存 voice）。
 
-### 语音转写层（后端工程师视角）
+### 语音转写层（后端工程师视角）——【2026-08-26 22:57 重大简化】
 
 ```
-语音 URL（xhscdn，m4a/mp3）→ curl_cffi 下载 → FunASR paraformer-zh 转写 → 文字 + 置信度
+✅ 发现：小红书网页自带"语音转文字"（服务端转写），DOM 类 audio-comment-container
+   的 span 文本即转写内容 → 直接 DOM 提取，零本地转写（无需 FunASR）！
 ```
 
-- **工具**：FunASR paraformer-zh（已装，用于视频转写，CPU 远超实时，短语音秒级）
+- **工具**：`tools/xhs_voice_extract.py`（CDP 连日常 Edge → 找已打开笔记页 → 展开回复+滚动 → 提取所有 audio-comment-container 文本）
+- **验证**：6a694aff 提取到 3 条博主语音转写（59s"南方红利玩法详解"、4s"盈利盈利..."、5s"没收到回复吗"）
+- **原 FunASR 方案降级为备选**（仅当网页无转写文本时启用，如旧评论/第三方场景）
+- **注意**：提取完整性依赖评论区加载（需展开回复+滚动）；部分语音可能未显示转写（需检查）
+- **工具**：FunASR paraformer-zh（已装，用于视频转写，CPU 远超实时，短语音秒级）【备选】
 - **批处理**：10 条语音逐条转写，batch_size=1，VAD 可选（短语音无需）
 - **输出**：`{comment_id}.txt` + 转写文字并入报告
 - **异常**：语音 URL 失效 → 标记"语音已失效"
