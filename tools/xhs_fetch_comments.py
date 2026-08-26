@@ -61,7 +61,7 @@ def main() -> int:
 
     with sync_playwright() as p:
         ctx = p.chromium.launch_persistent_context(
-            str(PROFILE_DIR), headless=True, viewport={"width": 1280, "height": 900},
+            str(PROFILE_DIR), headless=False, viewport={"width": 1280, "height": 900},  # 有头：小红书无头渲染不稳
             channel="msedge", args=["--no-proxy-server"],  # 系统 Edge 指纹 + 绕过梯子直连小红书
         )
         page = ctx.new_page()
@@ -80,33 +80,42 @@ def main() -> int:
         # 多策略滚动分页：直到评论数稳定
         last = -1
         stale = 0
-        for round_i in range(40):
+        for round_i in range(60):
             time.sleep(2)
             if len(comments) != last:
                 last = len(comments)
                 stale = 0
             else:
                 stale += 1
-                if stale >= 3:
+                if stale >= 4:
                     break
-            # 策略1：页面滚动到底
-            page.mouse.wheel(0, 5000)
-            time.sleep(1)
+            # 策略1：滚动评论区容器（小红书评论在内部滚动容器 comments-container）
+            try:
+                page.evaluate(
+                    """() => {
+                        const c = document.querySelector('.comments-container') || document.querySelector('.comments-el');
+                        if (c) c.scrollTop = c.scrollHeight;
+                        window.scrollBy(0, 400);
+                    }"""
+                )
+            except Exception:
+                pass
+            time.sleep(1.5)
             # 策略2：滚动所有可滚动容器到底
             try:
                 page.evaluate(
                     """() => {
-                        document.querySelectorAll('*').forEach(el => {
+                        document.querySelectorAll('.comments-container *, [class*=comment-list] *').forEach(el => {
                             if (el.scrollHeight > el.clientHeight + 200) el.scrollTop = el.scrollHeight;
                         });
                     }"""
                 )
             except Exception:
                 pass
-            time.sleep(1)
-            # 策略3：点击加载更多
+            time.sleep(1.5)
+            # 策略3：点击加载更多（如有）
             try:
-                page.get_by_text("查看更多评论", exact=False).first.click(timeout=1500)
+                page.get_by_text("查看更多", exact=False).first.click(timeout=1500)
                 time.sleep(1)
             except Exception:
                 pass
