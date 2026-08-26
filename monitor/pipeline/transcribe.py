@@ -15,7 +15,7 @@ import time
 from pathlib import Path
 
 from monitor.pipeline.download import PipelineOfflineError
-from monitor.pipeline.paths import ensure_ascii_work_copy
+from monitor.pipeline.paths import ensure_ascii_work_copy, retry_write_text
 
 logger = logging.getLogger("monitor.pipeline.transcribe")
 
@@ -165,6 +165,6 @@ def transcribe(video_path: str, out_dir: Path) -> str:
         "segments": segments,
         "text": full_text,
     }
-    out_path.write_text(json.dumps(doc, ensure_ascii=False, indent=2), encoding="utf-8")
+    retry_write_text(out_path, json.dumps(doc, ensure_ascii=False, indent=2))
     logger.info("transcript saved: %s", out_path)
     return str(out_path)

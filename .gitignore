@@ -5,7 +5,9 @@
 !*.env.example
 .cookies.json
 config/cookies.json
+config/platform_cookies.json
 tools/dy_profile/
+tools/xhs_profile/
 tools/_tmp_ck/
 tools/config/
 
@@ -29,6 +31,8 @@ venv/
 # 测试产物
 media/_e2e/
 media/_test_*/
+debug.log
+tools/handle64.exe
 
 # IDE
 .idea/
@@ -37,6 +41,12 @@ media/_test_*/
 # 内部记忆
 .workbuddy/
 
-# 第三方工具源码（git clone 安装，勿入库）
+# 第三方工具源码（git clone 安装，勿入库，README 记录来源与安装方式）
 tools/douyin-downloader/
 tools/xhs-downloader/
+tools/mediacrawler/
+tools/rsshub/
+
+# 第三方二进制（ffmpeg 等，安装脚本负责放入）
+tools/bin/*.exe
+tools/bin/*.dll

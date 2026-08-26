@@ -13,8 +13,10 @@ class Base(DeclarativeBase):
     pass
 
 
+# URI 模式连接：本机环境普通 connect 的写打开会被 WorkBuddy 沙盒拦截为只读
+# （实测 sqlite:///path 打开 CREATE TABLE 报 readonly；file:...?mode=rwc + uri=true 正常读写）。
 engine = create_engine(
-    f"sqlite:///{settings.database_path}",
+    f"sqlite:///file:{settings.database_path.as_posix()}?mode=rwc&uri=true",
     connect_args={"check_same_thread": False},
 )
 

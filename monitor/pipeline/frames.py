@@ -14,7 +14,7 @@ import logging
 import subprocess
 from pathlib import Path
 
-from monitor.pipeline.paths import ensure_ascii_work_copy
+from monitor.pipeline.paths import ensure_ascii_work_copy, retry_write_text
 
 logger = logging.getLogger("monitor.pipeline.frames")
 
@@ -107,5 +107,5 @@ def write_manifest(work_id: int, frames: list[dict], out_dir: Path, semantic_ali
         "frames": frames,
     }
     path = out_dir / "frame_manifest.json"
-    path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+    retry_write_text(path, json.dumps(manifest, ensure_ascii=False, indent=2))
     return path

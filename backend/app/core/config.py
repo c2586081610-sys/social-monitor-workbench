@@ -22,6 +22,11 @@ class Settings:
     def __init__(self) -> None:
         ws = _workspace_root()
         self.workspace_root: Path = ws
+        # tools/bin 注入 PATH 前部：ffmpeg / yutto / yt-dlp / xhs 下载器子进程依赖（Windows CreateProcess 不解析 .cmd，
+        # 但 shutil.which/ffmpeg 子进程需能直接找到 exe；.cmd 由 download.py 改用 python -m 调用规避）
+        _tools_bin = ws / "tools" / "bin"
+        if _tools_bin.exists():
+            os.environ["PATH"] = str(_tools_bin) + os.pathsep + os.environ.get("PATH", "")
         # 认证
         self.admin_token: str = os.getenv("ADMIN_TOKEN", "dev-admin-token-change-me")
         self.cors_origins: list[str] = [
