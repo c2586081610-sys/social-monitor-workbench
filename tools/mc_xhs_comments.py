@@ -36,7 +36,7 @@ def main() -> int:
         "--get_sub_comment", "yes",
         "--cookies", ck,
         "--save_data_option", "jsonl",
-        "--headless", "yes",
+        "--headless", "no",  # 有头渲染更稳（小红书无头偶发页面加载失败）
     ]
     print("[MediaCrawler] 采集:", ids)
     # 清理旧的当日 jsonl（避免覆盖已存在文件被文件保护拦截）
