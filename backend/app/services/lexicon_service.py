@@ -28,6 +28,7 @@ class LexiconService:
                 weight=payload.weight,
                 enabled=1 if payload.enabled else 0,
                 platform_scope=payload.platform_scope,
+                category=payload.category,
             )
             db.commit()
         except IntegrityError:
@@ -50,6 +51,8 @@ class LexiconService:
             fields["enabled"] = 1 if payload.enabled else 0
         if "platform_scope" in payload.model_fields_set:
             fields["platform_scope"] = payload.platform_scope
+        if "category" in payload.model_fields_set:
+            fields["category"] = payload.category
         try:
             entry = lexicon_repo.update(db, entry, **fields)
             db.commit()

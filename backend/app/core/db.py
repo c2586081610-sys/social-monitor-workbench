@@ -64,6 +64,8 @@ def init_db() -> None:
     with engine.begin() as conn:
         _ensure_column(conn, "works", "content_type", "VARCHAR(10) NOT NULL DEFAULT 'video'")
         _ensure_column(conn, "works", "media_urls", "TEXT")
+        # v0.5 迁移：lexicon 新增 category（兴趣区间：finance/ai/fitness/business/general）
+        _ensure_column(conn, "lexicon", "category", "VARCHAR(30)")
 
     with SessionLocal() as db:
         from app.repositories.health_repo import upsert_cookie

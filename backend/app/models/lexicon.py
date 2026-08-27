@@ -17,6 +17,7 @@ class LexiconEntry(Base):
     weight: Mapped[float] = mapped_column(nullable=False, default=1.0)
     enabled: Mapped[int] = mapped_column(nullable=False, default=1)
     platform_scope: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    category: Mapped[str | None] = mapped_column(String(30), nullable=True)  # 兴趣区间：finance/ai/fitness/business/general
     created_at: Mapped[str] = mapped_column(Text, nullable=False, default=now_iso)
     updated_at: Mapped[str] = mapped_column(Text, nullable=False, default=now_iso, onupdate=now_iso)
 

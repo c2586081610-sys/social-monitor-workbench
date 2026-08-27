@@ -214,6 +214,7 @@ export interface LexiconCreate {
   weight?: number;
   enabled?: boolean;
   platform_scope?: string | null;
+  category?: string | null;
 }
 
 export interface LexiconUpdate {
@@ -222,6 +223,7 @@ export interface LexiconUpdate {
   weight?: number;
   enabled?: boolean;
   platform_scope?: string | null;
+  category?: string | null;
 }
 
 export interface LexiconItem {
@@ -231,6 +233,7 @@ export interface LexiconItem {
   weight: number;
   enabled: boolean;
   platform_scope: string | null;
+  category: string | null;
   created_at: string;
   updated_at: string;
 }

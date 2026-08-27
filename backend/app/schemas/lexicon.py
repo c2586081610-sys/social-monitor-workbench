@@ -12,6 +12,7 @@ class LexiconCreate(BaseModel):
     weight: float = Field(default=1.0, ge=0.0)
     enabled: bool = True
     platform_scope: str | None = None
+    category: str | None = None  # 兴趣区间：finance/ai/fitness/business/general
 
 
 class LexiconUpdate(BaseModel):
@@ -20,6 +21,7 @@ class LexiconUpdate(BaseModel):
     weight: float | None = Field(default=None, ge=0.0)
     enabled: bool | None = None
     platform_scope: str | None = None
+    category: str | None = None
 
 
 class LexiconItem(BaseModel):
@@ -31,5 +33,6 @@ class LexiconItem(BaseModel):
     weight: float
     enabled: bool
     platform_scope: str | None
+    category: str | None
     created_at: str
     updated_at: str
