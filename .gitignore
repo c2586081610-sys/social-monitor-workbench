@@ -19,6 +19,7 @@ Obsidian/
 workbuddy/pending/
 workbuddy/triggers/
 workbuddy/monitor_heartbeat.json
+workbuddy/onetime_poll.log
 
 # 依赖与构建
 node_modules/

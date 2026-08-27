@@ -40,6 +40,32 @@ def _update_cookie(db: Session, platform: str, status: str, note: str | None) ->
     health_repo.upsert_cookie(db, platform, status, note=note, last_checked_at=now_iso())
 
 
+def _upsert_creator_entries(db: Session, creator: Creator, entries: list[dict]) -> int:
+    """把某博主最新作品增量落库 + 登记 parse 任务，返回新增数；更新 last_poll_at。"""
+    new_count = 0
+    for item in entries:
+        media_urls = item.get("media_urls")
+        work = work_repo.upsert(
+            db,
+            item["platform"],
+            item["external_id"],
+            title=item["title"],
+            url=item["url"],
+            published_at=item.get("published_at"),
+            creator_id=creator.id,
+            source_type="monitor",
+            content_type=item.get("content_type", "video"),
+            media_urls=json.dumps(media_urls, ensure_ascii=False) if media_urls else None,
+        )
+        if work.status == "NEW":
+            new_count += 1
+            task_repo.upsert(db, work.id, "parse", "pending")
+            work.status = "QUEUED"
+            creator.last_work_at = now_iso()
+    creator.last_poll_at = now_iso()
+    return new_count
+
+
 def poll_rsshub_platform(platform: str) -> None:
     """单平台轮询：拉取启用博主 → 增量 upsert 新作品 → 登记 parse 任务。"""
     adapter = RSSHubRouterAdapter(settings.rsshub_base_url)
@@ -60,27 +86,7 @@ def poll_rsshub_platform(platform: str) -> None:
                 db.commit()
                 logger.warning("%s 轮询失败 category=%s msg=%s", platform, exc.category, exc.message)
                 continue
-            new_count = 0
-            for item in entries:
-                media_urls = item.get("media_urls")
-                work = work_repo.upsert(
-                    db,
-                    item["platform"],
-                    item["external_id"],
-                    title=item["title"],
-                    url=item["url"],
-                    published_at=item.get("published_at"),
-                    creator_id=creator.id,
-                    source_type="monitor",
-                    content_type=item.get("content_type", "video"),
-                    media_urls=json.dumps(media_urls, ensure_ascii=False) if media_urls else None,
-                )
-                if work.status == "NEW":
-                    new_count += 1
-                    task_repo.upsert(db, work.id, "parse", "pending")
-                    work.status = "QUEUED"
-                    creator.last_work_at = now_iso()
-            creator.last_poll_at = now_iso()
+            new_count = _upsert_creator_entries(db, creator, entries)
             db.commit()
             if new_count:
                 logger.info("%s 博主 %s 新增 %d 条", platform, creator.name, new_count)
@@ -89,13 +95,52 @@ def poll_rsshub_platform(platform: str) -> None:
         db.commit()
 
 
+def poll_rsshub_creator(creator_id: int) -> None:
+    """单博主轮询（一次性爬取用）：按 creator.platform 走 RSSHub per-user 路由。
+
+    复用 _upsert_creator_entries 完成增量落库 + 登记 parse 任务，并更新 last_poll_at；
+    成功/失败均写 poll_logs（platform 级）。
+    """
+    adapter = RSSHubRouterAdapter(settings.rsshub_base_url)
+    if not adapter.is_configured():
+        logger.warning("RSSHUB_BASE_URL 未配置，跳过博主 %s", creator_id)
+        return
+    started = now_iso()
+    with SessionLocal() as db:
+        creator = db.get(Creator, creator_id)
+        if creator is None:
+            raise ValueError(f"creator {creator_id} 不存在")
+        platform = creator.platform
+        if platform not in RSSHUB_PLATFORMS:
+            logger.warning("平台 %s 无 RSSHub 路由，跳过博主 %s", platform, creator_id)
+            health_repo.create_poll_log(db, platform, "fail", detail="no_rsshub_route", started_at=started)
+            db.commit()
+            return
+        try:
+            entries = adapter.fetch_entries(platform, creator.external_id)
+        except RSSHubError as exc:
+            _update_cookie(db, platform, "WARN", exc.message)
+            health_repo.create_poll_log(db, platform, "fail", detail=exc.category, started_at=started)
+            db.commit()
+            logger.warning("博主 %s 轮询失败 category=%s msg=%s", creator.name, exc.category, exc.message)
+            return
+        new_count = _upsert_creator_entries(db, creator, entries)
+        _update_cookie(db, platform, "OK", None)
+        health_repo.create_poll_log(db, platform, "ok", detail=None, started_at=started)
+        db.commit()
+        if new_count:
+            logger.info("博主 %s 新增 %d 条", creator.name, new_count)
+
+
 def poll_douyin() -> None:
     """抖音 CDP 占位轮询（可配置开关，K1 间隔默认 ≥10min）。"""
     session = DouyinCDPSession(settings.douyin_cdp_enabled, settings.douyin_cdp_profile_dir)
     status = session.check()
+    started = now_iso()
     with SessionLocal() as db:
         _update_cookie(db, "douyin", status["status"], status["note"])
         if status["status"] != "OK":
+            health_repo.create_poll_log(db, "douyin", "failed", detail=status["note"] or "cdp_not_ready", started_at=started)
             db.commit()
             return
         creators = db.execute(
@@ -116,6 +161,8 @@ def poll_douyin() -> None:
                     creator.last_work_at = now_iso()
             creator.last_poll_at = now_iso()
             db.commit()
+        health_repo.create_poll_log(db, "douyin", "ok", detail=None, started_at=started)
+        db.commit()
 
 
 def consume_triggers() -> None:

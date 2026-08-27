@@ -60,3 +60,18 @@ def create_poll_log(
     db.add(log)
     db.flush()
     return log
+
+
+def latest_poll_logs(db: Session) -> dict[str, PollLog]:
+    """按平台取最近一次轮询日志（平台级上次爬取时间，poll-status 数据源）。
+
+    排序按 (platform, finished_at desc, id desc)，取每平台首条即最新。
+    """
+    rows = db.execute(
+        select(PollLog)
+        .order_by(PollLog.platform, PollLog.finished_at.desc().nullslast(), PollLog.id.desc())
+    ).scalars().all()
+    latest: dict[str, PollLog] = {}
+    for log in rows:
+        latest.setdefault(log.platform, log)
+    return latest
