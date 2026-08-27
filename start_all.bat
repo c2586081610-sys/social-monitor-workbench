@@ -19,6 +19,14 @@ set "PYTHON_SCRIPTS=C:\Users\Administrator\.workbuddy\binaries\python\versions\3
 rem ---- 将下载工具目录 + ffmpeg + Python Scripts 加入 PATH（yutto/ffmpeg 依赖） ----
 set "PATH=%ROOT%\tools\bin;%ROOT%\tools\ffmpeg-exe;%PYTHON_SCRIPTS%;%PATH%"
 
+rem ---- 双保险：把 backend\.env 注入当前会话（config.py 的 load_dotenv 之外的兜底） ----
+rem      仅补缺失变量；以 # 开头的行为注释跳过；KEY=VALUE 解析，VALUE 含空格/逗号均保留
+if exist "%ROOT%\backend\.env" (
+    for /f "usebackq eol=# tokens=1,* delims==" %%a in ("%ROOT%\backend\.env") do (
+        if not "%%a"=="" set "%%a=%%b"
+    )
+)
+
 rem ---- 前置检查：关键二进制存在 ----
 if not exist "%PYTHON%" (
     echo [ERROR] Python not found: %PYTHON%

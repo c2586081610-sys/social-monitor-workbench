@@ -1,9 +1,17 @@
 """配置加载：全部来自环境变量，禁止硬编码路径。
 
 默认工作区根 = backend 的父目录（承载 media/ Obsidian/ aggregator.db workbuddy/）。
+
+.env 加载：模块导入时读取 {backend}/.env（仅补缺失键，系统环境变量优先）。
 """
 import os
 from pathlib import Path
+
+from dotenv import load_dotenv
+
+# config.py 位于 {工作区根}/backend/app/core/config.py → parents[2] 即 backend/
+_BACKEND_DIR = Path(__file__).resolve().parents[2]
+load_dotenv(_BACKEND_DIR / ".env", override=False)
 
 
 def _workspace_root() -> Path:
