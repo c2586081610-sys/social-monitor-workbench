@@ -27,6 +27,9 @@ class Work(Base):
     url: Mapped[str] = mapped_column(Text, nullable=False)
     published_at: Mapped[str | None] = mapped_column(Text, nullable=True)
     source_type: Mapped[str] = mapped_column(String(20), nullable=False, default="monitor")
+    # v0.4：内容类型（video/image/text，默认 video 兼容既有数据）+ 媒体直链清单（JSON，图文/视频分流用）
+    content_type: Mapped[str] = mapped_column(String(10), nullable=False, default="video")
+    media_urls: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(String(30), nullable=False, default="NEW")
     task_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
     media_path: Mapped[str | None] = mapped_column(Text, nullable=True)

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from sqlalchemy import create_engine, event
+from sqlalchemy import create_engine, event, text
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 from app.core.config import settings
@@ -43,6 +43,13 @@ def _ensure_dirs() -> None:
         Path(d).mkdir(parents=True, exist_ok=True)
 
 
+def _ensure_column(conn, table: str, column: str, ddl: str) -> None:
+    """幂等加列：PRAGMA table_info 检查列不存在时 ALTER TABLE ADD COLUMN（v0.4 迁移）。"""
+    cols = {row[1] for row in conn.execute(text(f"PRAGMA table_info({table})"))}
+    if column not in cols:
+        conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}"))
+
+
 def init_db() -> None:
     """建表 + 种子 cookie 健康度行 + 创建存储目录。幂等，聚合 API 与监控层共用。"""
     _ensure_dirs()
@@ -52,6 +59,11 @@ def init_db() -> None:
     )
 
     Base.metadata.create_all(bind=engine)
+
+    # v0.4 轻量迁移：works 新增 content_type / media_urls（幂等，已存在则跳过）
+    with engine.begin() as conn:
+        _ensure_column(conn, "works", "content_type", "VARCHAR(10) NOT NULL DEFAULT 'video'")
+        _ensure_column(conn, "works", "media_urls", "TEXT")
 
     with SessionLocal() as db:
         from app.repositories.health_repo import upsert_cookie

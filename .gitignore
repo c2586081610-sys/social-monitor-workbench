@@ -50,3 +50,4 @@ tools/rsshub/
 # 第三方二进制（ffmpeg 等，安装脚本负责放入）
 tools/bin/*.exe
 tools/bin/*.dll
+tools/ffmpeg-exe/

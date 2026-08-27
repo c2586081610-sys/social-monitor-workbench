@@ -196,19 +196,21 @@ def download(platform: str, url: str, media_dir: Path) -> str:
             check=False,
         )
     elif platform == "twitter":
-        # yt-dlp：python -m yt_dlp -f worst <url> --cookies <file> -o <dir>/%(title)s.%(ext)s
+        # yt-dlp：python -m yt_dlp -f worst <url> --cookies <file> --proxy <proxy> -o <dir>/%(title)s.%(ext)s
+        # v0.4：国内访问 x.com 必须注入代理（TWITTER_PROXY 可覆盖默认 127.0.0.1:7892）
         try:
             import yt_dlp  # noqa: F401
         except ImportError as exc:
             raise PipelineOfflineError("yt-dlp 未安装（pip install yt-dlp）") from exc
         cookies = _load_platform_cookies().get("twitter", {})
         cookies_file = cookies.get("cookies_file", "")
+        proxy = os.getenv("TWITTER_PROXY", "http://127.0.0.1:7892")
         cmd = [sys.executable, "-m", "yt_dlp", "-f", "worst", url]
         if cookies_file:
             cmd += ["--cookies", str(cookies_file)]
         else:
             logger.warning("推特未配置 cookies_file，匿名下载大概率失败")
-        cmd += ["-o", str(media_dir / "%(title)s.%(ext)s")]
+        cmd += ["--proxy", proxy, "-o", str(media_dir / "%(title)s.%(ext)s")]
         subprocess.run(cmd, check=False)
     else:
         # 兜底：尝试 MediaCrawler 适配器（全平台预留）

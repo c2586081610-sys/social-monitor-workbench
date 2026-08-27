@@ -16,8 +16,8 @@ set "PYTHON=C:\Users\Administrator\.workbuddy\binaries\python\versions\3.13.12\p
 set "NODE=C:\Users\Administrator\.workbuddy\binaries\node\versions\22.22.2\node.exe"
 set "PYTHON_SCRIPTS=C:\Users\Administrator\.workbuddy\binaries\python\versions\3.13.12\Scripts"
 
-rem ---- 将下载工具目录 + Python Scripts 加入 PATH（yutto/ffmpeg 依赖） ----
-set "PATH=%ROOT%\tools\bin;%PYTHON_SCRIPTS%;%PATH%"
+rem ---- 将下载工具目录 + ffmpeg + Python Scripts 加入 PATH（yutto/ffmpeg 依赖） ----
+set "PATH=%ROOT%\tools\bin;%ROOT%\tools\ffmpeg-exe;%PYTHON_SCRIPTS%;%PATH%"
 
 rem ---- 前置检查：关键二进制存在 ----
 if not exist "%PYTHON%" (

@@ -62,6 +62,7 @@ def poll_rsshub_platform(platform: str) -> None:
                 continue
             new_count = 0
             for item in entries:
+                media_urls = item.get("media_urls")
                 work = work_repo.upsert(
                     db,
                     item["platform"],
@@ -71,6 +72,8 @@ def poll_rsshub_platform(platform: str) -> None:
                     published_at=item.get("published_at"),
                     creator_id=creator.id,
                     source_type="monitor",
+                    content_type=item.get("content_type", "video"),
+                    media_urls=json.dumps(media_urls, ensure_ascii=False) if media_urls else None,
                 )
                 if work.status == "NEW":
                     new_count += 1
@@ -177,8 +180,16 @@ def run_pipeline() -> None:
 
 
 def _process_work(db: Session, work) -> None:
-    """单作品五步流水线：下载→转写→语义抽帧→素材就绪清单。"""
+    """单作品流水线。v0.4：按 content_type 分流——
+    video 走原五步（下载→转写→抽帧→就绪）；image/text（推特图文）走
+    下载图片→写 manifest→跳过转写/抽帧→直接进 AI 笔记。
+    """
     media_dir = _work_media_dir(work)
+    content_type = work.content_type or "video"
+    if content_type != "video":
+        _process_image_work(db, work, media_dir)
+        return
+
     video_path = download.download(work.platform, work.url, media_dir)
     work.status = "DOWNLOADING"
     work.media_path = str(media_dir.relative_to(settings.media_root)).replace("\\", "/")
@@ -203,6 +214,28 @@ def _process_work(db: Session, work) -> None:
     manifest_path = frames.write_manifest(work.id, extracted, frames_dir)
     work.frame_manifest_path = str(manifest_path.relative_to(settings.media_root)).replace("\\", "/")
     task_repo.upsert(db, work.id, "frames", "succeeded", attempts=1)
+
+    work.status = "NOTE_GENERATING"
+    notify.notify_ready(db, work)
+
+
+def _process_image_work(db: Session, work, media_dir: Path) -> None:
+    """图文作品：curl_cffi 下载图片清单 → 写 manifest → 直接进入 AI 笔记阶段。"""
+    from monitor.pipeline import twitter_image
+
+    work.status = "DOWNLOADING"
+    work.media_path = str(media_dir.relative_to(settings.media_root)).replace("\\", "/")
+    images_dir = media_dir / "images"
+    try:
+        manifest_path = twitter_image.download_images(work, images_dir)
+    except Exception as exc:  # noqa: BLE001
+        work.status = "FAILED"
+        work.last_error = f"图文下载失败: {exc}"
+        task_repo.mark_failed(db, work.id, "download", str(exc))
+        logger.exception("work %s 图文下载异常", work.id)
+        return
+    work.frame_manifest_path = str(manifest_path.relative_to(settings.media_root)).replace("\\", "/")
+    task_repo.upsert(db, work.id, "download", "succeeded", attempts=1)
 
     work.status = "NOTE_GENERATING"
     notify.notify_ready(db, work)
