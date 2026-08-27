@@ -24,7 +24,7 @@
 | `docs/` | 规格文档（SPEC/OpenAPI/设计Token） |
 | `backend/` | FastAPI 聚合 API（27 端点 + SQLite 状态机） |
 | `monitor/` | 监控层（RSSHub/CDP/调度/流水线：下载→转写→抽帧） |
-| `frontend/` | React + Vite + Tailwind 前端（10 页面） |
+| `frontend/` | React + Vite + Tailwind 前端（8 路由：仪表盘/创作者作品/作品详情/分组/标签/待分类/词库/设置） |
 | `tools/` | 自研脚本（cookie 捕获/笔记提取/评论抓取/流水线测试）+ 第三方工具目录 |
 | `config/` | 运行时配置（cookie 等**敏感文件不入库**，见 `.gitignore`） |
 

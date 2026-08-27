@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
@@ -16,11 +17,20 @@ from app.core.errors import AppError
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 logger = logging.getLogger("aggregator")
 
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    """应用生命周期：启动时建表 + 幂等迁移（替代 FastAPI on_event，消除弃用警告）。"""
+    init_db()
+    yield
+
+
 app = FastAPI(
     title="博主监控 + AI 笔记工作台 — 聚合 API",
     version="1.0.0",
     docs_url="/docs",
     redoc_url=None,
+    lifespan=lifespan,
 )
 
 app.add_middleware(
@@ -57,11 +67,6 @@ async def http_error_handler(_request: Request, exc: HTTPException) -> JSONRespo
 async def unexpected_error_handler(_request: Request, exc: Exception) -> JSONResponse:
     logger.exception("unhandled error: %s", exc)
     return JSONResponse(status_code=500, content={"code": 500, "data": None, "message": "INTERNAL_ERROR"})
-
-
-@app.on_event("startup")
-def _startup() -> None:
-    init_db()
 
 
 @app.get("/api/v1/healthz", tags=["health"])
