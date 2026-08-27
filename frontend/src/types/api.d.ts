@@ -273,6 +273,19 @@ export interface SystemHealthList {
 }
 
 // ---------------- monitor ----------------
-export interface PollResult {
+/** 立即爬取触发结果（POST /api/v1/monitor/poll-now）。 */
+export interface PollNowResult {
   triggered: boolean;
+  pid: number;
+}
+
+/** 各平台最近爬取记录（GET /api/v1/monitor/poll-status）。 */
+export interface PollStatusItem {
+  platform: Platform;
+  last_poll_at: string | null;
+  status: string;
+}
+
+export interface PollStatusList {
+  items: PollStatusItem[];
 }

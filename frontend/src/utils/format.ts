@@ -42,3 +42,22 @@ export function formatSeconds(seconds?: number | null): string {
   const s = total % 60;
   return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 }
+
+/**
+ * 爬取时间相对展示：≤60s「刚刚」、<60min「X 分钟前」、<24h「X 小时前」、否则「X 天前」。
+ * null / 非法时间返回「—」。
+ */
+export function formatRelativeTime(iso: string | null | undefined): string {
+  const d = parseDate(iso);
+  if (!d) return '—';
+  const diffMs = Date.now() - d.getTime();
+  if (diffMs < 0) return '刚刚';
+  const seconds = Math.floor(diffMs / 1000);
+  if (seconds <= 60) return '刚刚';
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes} 分钟前`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours} 小时前`;
+  const days = Math.floor(hours / 24);
+  return `${days} 天前`;
+}

@@ -1,30 +1,25 @@
-/** P1 博主列表（首页）：博主卡片 + 添加博主 + 手动轮询 + 引擎在线状态 + 分组过滤。 */
+/** P1 博主列表（首页）：全局聚合开关 + 立即爬取全部 + 自动刷新 + 平台监控 + 引擎分组 + 博主卡片。 */
 import { useEffect, useMemo, useState } from 'react';
 import { Plus, RefreshCw, UserPlus } from 'lucide-react';
 import CreatorCard from '../components/creator/CreatorCard';
 import AddCreatorModal from '../components/creator/AddCreatorModal';
+import Toggle from '../components/common/Toggle';
+import EngineHealthPanel from '../components/dashboard/EngineHealthPanel';
+import PlatformPollPanel from '../components/dashboard/PlatformPollPanel';
 import { EmptyState, ErrorState, LoadingState } from '../components/common/StateViews';
-import { ToneBadge } from '../components/common/StatusBadge';
 import { listCreators, getCreator } from '../services/creators';
 import { listGroups } from '../services/groups';
-import { getSystemHealth } from '../services/health';
-import { triggerPoll } from '../services/monitor';
-import { useAsyncData, useMutation, usePolling } from '../hooks/useApi';
-import { PLATFORMS, SYSTEM_COMPONENT_LABEL, SYSTEM_COMPONENT_STATUS } from '../utils/constants';
-import type { Platform, SystemHealth, WorkSummary } from '../types/api.d';
-
-const COMPONENT_TONE: Record<SystemHealth['status'], 'success' | 'danger' | 'warning' | 'neutral'> = {
-  online: 'success',
-  offline: 'danger',
-  degraded: 'warning',
-  unknown: 'neutral',
-};
+import { pollNow } from '../services/monitor';
+import { useAsyncData } from '../hooks/useApi';
+import { readAggSettings, setGlobalEnabled } from '../utils/aggSettings';
+import type { WorkSummary } from '../types/api.d';
 
 export default function DashboardPage() {
   const [groupFilter, setGroupFilter] = useState<'all' | number>('all');
   const [addOpen, setAddOpen] = useState(false);
   const [pollMsg, setPollMsg] = useState<string | null>(null);
-  const [pollPlatform, setPollPlatform] = useState<string>('');
+  const [pollingAll, setPollingAll] = useState(false);
+  const [agg, setAgg] = useState(() => readAggSettings());
 
   const groupsQuery = useAsyncData(() => listGroups(), []);
   const creatorsQuery = useAsyncData(
@@ -36,12 +31,6 @@ export default function DashboardPage() {
       }),
     [groupFilter],
   );
-  const systemQuery = useAsyncData(() => getSystemHealth(), []);
-
-  const pollMutation = useMutation((platform: string) => triggerPoll(platform ? (platform as Platform) : undefined));
-
-  // 每 30s 刷新一次引擎健康度
-  usePolling(systemQuery.refetch, true, 30000);
 
   // 最近作品摘要（详情接口返回 ≤5 条），仅对当前页博主拉取
   const [recentMap, setRecentMap] = useState<Record<number, WorkSummary[]>>({});
@@ -71,19 +60,40 @@ export default function DashboardPage() {
     return (id: number | null) => (id == null ? undefined : find(id));
   }, [groupsQuery.data]);
 
-  const handlePoll = async () => {
+  const handleToggleGlobal = (value: boolean) => {
+    setGlobalEnabled(value);
+    setAgg((a) => ({ ...a, globalEnabled: value }));
+  };
+
+  const handlePollAll = async () => {
+    if (pollingAll) return;
     setPollMsg(null);
+    setPollingAll(true);
     try {
-      await pollMutation.run(pollPlatform);
-      setPollMsg('轮询已触发，正在检测新作品…');
+      await pollNow();
+      setPollMsg('爬取已触发，正在拉取最新作品…');
       creatorsQuery.refetch();
-      systemQuery.refetch();
     } catch (e) {
-      setPollMsg(e instanceof Error ? `轮询失败：${e.message}` : '轮询失败');
+      setPollMsg(e instanceof Error ? `爬取失败：${e.message}` : '爬取失败');
+    } finally {
+      setPollingAll(false);
     }
   };
 
-  const systemItems = systemQuery.data?.items ?? [];
+  // 自动刷新：总启用 + 设置开启时，每 N 分钟触发一次全平台爬取（仅在 Web 打开期间生效）
+  useEffect(() => {
+    if (!agg.globalEnabled || !agg.autoRefresh) return;
+    const minutes = Math.max(1, agg.autoRefreshMinutes);
+    const id = window.setInterval(() => {
+      const cur = readAggSettings();
+      if (!cur.globalEnabled || !cur.autoRefresh) return;
+      pollNow().catch(() => {
+        /* 静默，下个周期重试 */
+      });
+    }, minutes * 60 * 1000);
+    return () => window.clearInterval(id);
+  }, [agg.globalEnabled, agg.autoRefresh, agg.autoRefreshMinutes]);
+
   const creators = creatorsQuery.data?.items ?? [];
 
   return (
@@ -94,29 +104,21 @@ export default function DashboardPage() {
           <h1 className="text-lg font-semibold text-ink">博主列表</h1>
           <p className="text-xs text-ink-muted">四平台统一监控 · 共 {creatorsQuery.data?.total ?? 0} 位</p>
         </div>
-        <div className="flex items-center gap-2">
-          <div className="flex items-center gap-1.5 rounded-md border border-line bg-surface px-2 py-1.5">
-            <select
-              value={pollPlatform}
-              onChange={(e) => setPollPlatform(e.target.value)}
-              className="bg-transparent text-sm text-ink-secondary focus:outline-none"
-              aria-label="轮询平台"
-            >
-              <option value="">全部平台</option>
-              {PLATFORMS.map((p) => (
-                <option key={p.value} value={p.value}>{p.label}</option>
-              ))}
-            </select>
-            <button
-              type="button"
-              onClick={handlePoll}
-              disabled={pollMutation.loading}
-              className="inline-flex items-center gap-1 rounded-md bg-surface px-2 py-0.5 text-sm text-primary transition-colors hover:bg-primary-light disabled:opacity-60"
-            >
-              <RefreshCw className={`h-3.5 w-3.5 ${pollMutation.loading ? 'animate-spin' : ''}`} />
-              立即轮询
-            </button>
-          </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <label className="flex items-center gap-2 rounded-md border border-line bg-surface px-2.5 py-2 text-sm text-ink-secondary">
+            <Toggle size="sm" checked={agg.globalEnabled} onChange={handleToggleGlobal} label="聚合监控总开关" />
+            聚合监控
+          </label>
+          <button
+            type="button"
+            onClick={handlePollAll}
+            disabled={!agg.globalEnabled || pollingAll}
+            className="inline-flex items-center gap-1.5 rounded-md border border-primary/40 bg-surface px-3 py-2 text-sm font-medium text-primary transition-colors hover:bg-primary-light disabled:cursor-not-allowed disabled:opacity-50"
+            title={agg.globalEnabled ? '立即爬取全部平台' : '已关闭总开关'}
+          >
+            <RefreshCw className={`h-4 w-4 ${pollingAll ? 'animate-spin' : ''}`} />
+            立即爬取全部
+          </button>
           <button
             type="button"
             onClick={() => setAddOpen(true)}
@@ -132,25 +134,11 @@ export default function DashboardPage() {
         <p className="rounded-md bg-info-light px-3 py-2 text-sm text-info">{pollMsg}</p>
       ) : null}
 
-      {/* 引擎在线状态 */}
-      <section className="rounded-lg border border-line bg-surface p-3">
-        <h2 className="mb-2 text-xs font-semibold uppercase tracking-widest text-ink-muted">引擎在线状态</h2>
-        {systemQuery.loading ? (
-          <p className="text-xs text-ink-muted">检测中…</p>
-        ) : systemItems.length === 0 ? (
-          <p className="text-xs text-ink-muted">暂无引擎信息</p>
-        ) : (
-          <div className="flex flex-wrap gap-2">
-            {systemItems.map((s) => (
-              <span key={s.component} className="inline-flex items-center gap-1.5 rounded-full border border-line bg-sidebar px-2.5 py-1 text-xs text-ink-secondary">
-                <EngineStatusBadge status={s.status} />
-                {SYSTEM_COMPONENT_LABEL[s.component] ?? s.component}
-                <span className="text-ink-muted">· {SYSTEM_COMPONENT_STATUS[s.status] ?? s.status}</span>
-              </span>
-            ))}
-          </div>
-        )}
-      </section>
+      {/* 引擎在线状态（按流水线角色分组） */}
+      <EngineHealthPanel />
+
+      {/* 平台监控（启用开关 + 立即爬取 + 上次爬取时间） */}
+      <PlatformPollPanel />
 
       {/* 分组过滤 */}
       <div className="flex flex-wrap items-center gap-2">
@@ -223,8 +211,4 @@ export default function DashboardPage() {
       />
     </div>
   );
-}
-
-function EngineStatusBadge({ status }: { status: SystemHealth['status'] }) {
-  return <ToneBadge tone={COMPONENT_TONE[status]} label={SYSTEM_COMPONENT_STATUS[status] ?? status} />;
 }

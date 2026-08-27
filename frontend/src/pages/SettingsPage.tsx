@@ -1,12 +1,14 @@
-/** P8 设置：cookie 状态 + 重新扫码引导 + 轮询间隔配置 + API 连接 + 系统健康 + 公众号占位。 */
+/** P8 设置：cookie 状态 + 重新扫码引导 + 自动刷新爬取 + 轮询间隔配置 + API 连接 + 系统健康 + 公众号占位。 */
 import { useState } from 'react';
 import { KeyRound, RefreshCw, Settings2 } from 'lucide-react';
 import { CookieStatusBadge, ToneBadge } from '../components/common/StatusBadge';
 import { ErrorState, LoadingState } from '../components/common/StateViews';
+import Toggle from '../components/common/Toggle';
 import { getCookieHealth, getSystemHealth, pingHealth } from '../services/health';
 import { useAsyncData, usePolling } from '../hooks/useApi';
 import { useRelogin } from '../state/relogin';
 import { API_BASE_URL, getToken, setToken } from '../config/api';
+import { readAggSettings, setAutoRefresh, setAutoRefreshMinutes } from '../utils/aggSettings';
 import { PLATFORM_LABEL, POLL_INTERVAL_INFO, SYSTEM_COMPONENT_LABEL, SYSTEM_COMPONENT_STATUS } from '../utils/constants';
 import { formatDateTime } from '../utils/format';
 
@@ -16,6 +18,14 @@ const SYSTEM_TONE: Record<string, 'success' | 'danger' | 'warning' | 'neutral'> 
   degraded: 'warning',
   unknown: 'neutral',
 };
+
+const AUTO_REFRESH_PRESETS: { label: string; minutes: number }[] = [
+  { label: '1 小时', minutes: 60 },
+  { label: '2 小时', minutes: 120 },
+  { label: '5 小时', minutes: 300 },
+  { label: '12 小时', minutes: 720 },
+  { label: '24 小时', minutes: 1440 },
+];
 
 function Section({ title, desc, children }: { title: string; desc?: string; children: React.ReactNode }) {
   return (
@@ -31,6 +41,8 @@ export default function SettingsPage() {
   const [tokenInput, setTokenInput] = useState(getToken());
   const [connMsg, setConnMsg] = useState<string | null>(null);
   const [connOk, setConnOk] = useState<boolean | null>(null);
+  const [autoRefresh, setAutoRefreshState] = useState(() => readAggSettings().autoRefresh);
+  const [autoMinutes, setAutoMinutes] = useState(() => readAggSettings().autoRefreshMinutes);
   const { open } = useRelogin();
 
   const cookieQuery = useAsyncData(() => getCookieHealth(), []);
@@ -54,6 +66,27 @@ export default function SettingsPage() {
       setConnMsg(e instanceof Error ? `连接失败：${e.message}` : '连接失败');
     }
   };
+
+  const handleAutoRefreshToggle = (value: boolean) => {
+    setAutoRefresh(value);
+    setAutoRefreshState(value);
+  };
+
+  const handlePreset = (minutes: number) => {
+    setAutoRefreshMinutes(minutes);
+    setAutoMinutes(minutes);
+  };
+
+  const handleCustomMinutes = (value: string) => {
+    const n = Number(value);
+    if (Number.isFinite(n) && n > 0) {
+      setAutoRefreshMinutes(n);
+      setAutoMinutes(Math.round(n));
+    }
+  };
+
+  const intervalLabel =
+    autoMinutes >= 60 && autoMinutes % 60 === 0 ? `${autoMinutes / 60} 小时` : `${autoMinutes} 分钟`;
 
   return (
     <div className="space-y-4">
@@ -154,6 +187,50 @@ export default function SettingsPage() {
             ))}
           </div>
         )}
+      </Section>
+
+      {/* 自动刷新爬取 */}
+      <Section title="自动刷新爬取" desc="Web 端按间隔定时触发全平台爬取；需首页「聚合监控」总开关保持开启。">
+        <div className="flex flex-wrap items-center gap-3">
+          <label className="flex items-center gap-2 text-sm text-ink-secondary">
+            <Toggle checked={autoRefresh} onChange={handleAutoRefreshToggle} label="启用自动刷新" />
+            启用自动刷新
+          </label>
+          <span className="text-xs text-ink-muted">当前间隔：{intervalLabel}</span>
+        </div>
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          {AUTO_REFRESH_PRESETS.map((p) => (
+            <button
+              key={p.minutes}
+              type="button"
+              disabled={!autoRefresh}
+              onClick={() => handlePreset(p.minutes)}
+              className={`rounded-full px-3 py-1 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+                autoMinutes === p.minutes
+                  ? 'bg-primary text-white'
+                  : 'border border-line bg-surface text-ink-secondary hover:bg-sidebar'
+              }`}
+            >
+              {p.label}
+            </button>
+          ))}
+          <label className="flex items-center gap-1.5 text-xs text-ink-muted">
+            自定义
+            <input
+              type="number"
+              min={1}
+              value={autoMinutes}
+              disabled={!autoRefresh}
+              onChange={(e) => handleCustomMinutes(e.target.value)}
+              className="w-20 rounded-md border border-line bg-surface px-2 py-1 text-sm text-ink focus:border-primary focus:outline-none disabled:opacity-50"
+            />
+            分钟
+          </label>
+        </div>
+        <p className="mt-2 flex items-center gap-1.5 text-xs text-ink-muted">
+          <Settings2 className="h-3.5 w-3.5" />
+          自动刷新仅在 Web 端打开时生效。
+        </p>
       </Section>
 
       {/* 轮询间隔配置 */}

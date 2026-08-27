@@ -1,12 +1,13 @@
-/** 博主卡片：头像占位 / 名称 / 分组 / 平台 / 监控状态 / 最近作品缩略+状态徽标 / 启停 / 删除。 */
+/** 博主卡片：头像占位 / 名称 / 分组 / 平台 / 监控状态 / 最近作品缩略+状态徽标 / 启停 / 立即爬取 / 删除。 */
 import { Link } from 'react-router-dom';
-import { Pause, Play, Trash2, User } from 'lucide-react';
+import { Pause, Play, RefreshCw, Trash2, User } from 'lucide-react';
 import { useState } from 'react';
 import { deleteCreator, updateCreator } from '../../services/creators';
+import { pollNow } from '../../services/monitor';
 import { useMutation } from '../../hooks/useApi';
 import PlatformBadge from '../common/PlatformBadge';
 import ConfirmDialog from '../common/ConfirmDialog';
-import { formatDateTime, relativeTime } from '../../utils/format';
+import { formatDateTime, formatRelativeTime } from '../../utils/format';
 import { STATUS_LABEL } from '../../utils/constants';
 import type { Creator, WorkSummary } from '../../types/api.d';
 
@@ -23,6 +24,8 @@ export default function CreatorCard({ creator, groupName, recentWorks = [], onCh
     updateCreator(creator.id, { enabled }),
   );
   const deleteMutation = useMutation((id: number) => deleteCreator(id));
+  const [pollPending, setPollPending] = useState(false);
+  const [pollTriggered, setPollTriggered] = useState(false);
 
   const handleToggle = async () => {
     try {
@@ -30,6 +33,21 @@ export default function CreatorCard({ creator, groupName, recentWorks = [], onCh
       onChanged();
     } catch {
       /* 错误由卡片顶部统一提示，此处静默 */
+    }
+  };
+
+  const handlePoll = async () => {
+    if (pollPending) return;
+    setPollPending(true);
+    try {
+      await pollNow({ creator_id: creator.id });
+      setPollTriggered(true);
+      window.setTimeout(() => setPollTriggered(false), 2000);
+      onChanged();
+    } catch {
+      /* 失败静默，可重试 */
+    } finally {
+      setPollPending(false);
     }
   };
 
@@ -78,7 +96,7 @@ export default function CreatorCard({ creator, groupName, recentWorks = [], onCh
       <dl className="mt-3 grid grid-cols-2 gap-2 text-xs text-ink-secondary">
         <div>
           <dt className="text-ink-muted">最近轮询</dt>
-          <dd className="truncate-1">{relativeTime(creator.last_poll_at)}</dd>
+          <dd className="truncate-1">{formatRelativeTime(creator.last_poll_at)}</dd>
         </div>
         <div>
           <dt className="text-ink-muted">最近作品</dt>
@@ -109,13 +127,25 @@ export default function CreatorCard({ creator, groupName, recentWorks = [], onCh
         )}
       </div>
 
-      <div className="mt-3 flex items-center justify-between border-t border-line pt-3">
-        <Link
-          to={`/creators/${creator.id}`}
-          className="rounded-md bg-primary px-2.5 py-1.5 text-xs font-medium text-white transition-colors hover:bg-primary-hover"
-        >
-          查看作品
-        </Link>
+      <div className="mt-3 flex items-center justify-between gap-2 border-t border-line pt-3">
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={handlePoll}
+            disabled={pollPending}
+            className="inline-flex items-center gap-1 rounded-md border border-line px-2 py-1.5 text-xs text-ink-secondary transition-colors hover:border-primary/40 hover:text-primary disabled:cursor-not-allowed disabled:opacity-50"
+            title="立即爬取该博主最新作品"
+          >
+            <RefreshCw className={`h-3.5 w-3.5 ${pollPending ? 'animate-spin' : ''}`} />
+            {pollTriggered ? '已触发' : '立即爬取'}
+          </button>
+          <Link
+            to={`/creators/${creator.id}`}
+            className="rounded-md bg-primary px-2.5 py-1.5 text-xs font-medium text-white transition-colors hover:bg-primary-hover"
+          >
+            查看作品
+          </Link>
+        </div>
         <button
           type="button"
           onClick={() => setConfirmOpen(true)}
