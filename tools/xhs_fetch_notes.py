@@ -45,6 +45,7 @@ def main() -> int:
                     "comment_count": (n.get("interact_info") or {}).get("comment_count", "0"),
                     "has_video": bool(n.get("video")),
                     "cover": (n.get("cover") or {}).get("url_default", ""),
+                    "time": n.get("time") or 0,  # 发布 unix 时间戳（秒）
                 }
             )
 
