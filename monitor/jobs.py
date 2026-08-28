@@ -23,10 +23,11 @@ from monitor.pipeline.download import PipelineOfflineError  # noqa: E402
 from monitor.platforms.douyin_cdp import DouyinCDPSession  # noqa: E402
 from monitor.platforms.douyin_mediacrawler import DouyinMediaCrawlerAdapter  # noqa: E402
 from monitor.platforms.rsshub import RSSHubError, RSSHubRouterAdapter  # noqa: E402
+from monitor.platforms.xhs_mediacrawler import XhsMediacrawlerAdapter  # noqa: E402
 
 logger = logging.getLogger("monitor.jobs")
 
-RSSHUB_PLATFORMS = ("bilibili", "xhs", "twitter")
+RSSHUB_PLATFORMS = ("bilibili", "twitter")
 
 
 def write_heartbeat() -> None:
@@ -171,6 +172,69 @@ def poll_douyin() -> None:
         db.commit()
 
 
+def _poll_xhs_creators(db, creators) -> int:
+    """遍历小红书博主抓最新笔记并落库，返回新增数。"""
+    adapter = XhsMediacrawlerAdapter()
+    total_new = 0
+    for creator in creators:
+        profile_url = creator.profile_url or ""
+        if not profile_url:
+            continue
+        try:
+            entries = adapter.poll_creator(profile_url)
+        except Exception as e:  # noqa: BLE001  单博主失败不阻塞其余
+            logger.warning("xhs 博主 %s 爬取异常: %s", creator.name, e)
+            continue
+        total_new += _upsert_creator_entries(db, creator, entries)
+    return total_new
+
+
+def poll_xhs() -> None:
+    """小红书监测：Playwright 拦截 user_posted API 抓博主最新笔记（替代 RSSHub xhs 路由）。"""
+    adapter = XhsMediacrawlerAdapter()
+    started = now_iso()
+    with SessionLocal() as db:
+        if not adapter.available():
+            msg = "xhs 抓取工具缺失（tools/xhs_fetch_notes.py）"
+            _update_cookie(db, "xhs", "UNKNOWN", msg)
+            health_repo.create_poll_log(db, "xhs", "failed", detail=msg, started_at=started)
+            db.commit()
+            return
+        creators = db.execute(
+            select(Creator).where(Creator.platform == "xhs", Creator.enabled == 1)
+        ).scalars().all()
+        try:
+            total_new = _poll_xhs_creators(db, creators)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("xhs 轮询整体异常: %s", e)
+            _update_cookie(db, "xhs", "FAIL", f"xhs 异常: {str(e)[:80]}")
+            health_repo.create_poll_log(db, "xhs", "failed", detail=f"xhs 异常: {str(e)[:120]}", started_at=started)
+            db.commit()
+            return
+        _update_cookie(db, "xhs", "OK", "xhs 拦截监测")
+        health_repo.create_poll_log(db, "xhs", "ok", detail=None, started_at=started, new_works=total_new)
+        db.commit()
+
+
+def poll_xhs_creator(creator_id: int) -> None:
+    """单博主小红书立即爬取（onetime --creator 用）。"""
+    started = now_iso()
+    with SessionLocal() as db:
+        creator = db.get(Creator, creator_id)
+        if creator is None or creator.platform != "xhs":
+            health_repo.create_poll_log(db, "xhs", "fail", detail="creator_not_found", started_at=started)
+            db.commit()
+            return
+        try:
+            total_new = _poll_xhs_creators(db, [creator])
+        except Exception as e:  # noqa: BLE001
+            health_repo.create_poll_log(db, "xhs", "fail", detail=f"xhs 异常: {str(e)[:120]}", started_at=started)
+            db.commit()
+            return
+        health_repo.create_poll_log(db, "xhs", "ok", detail=None, started_at=started, new_works=total_new)
+        db.commit()
+
+
 def consume_triggers() -> None:
     """消费聚合 API /monitor/poll 写下的 trigger 文件，处理完即删除。"""
     trigger_dir: Path = settings.trigger_dir
@@ -188,12 +252,15 @@ def consume_triggers() -> None:
                 poll_rsshub_platform(platform)
             elif platform == "douyin":
                 poll_douyin()
+            elif platform == "xhs":
+                poll_xhs()
             else:
                 logger.warning("未知平台 trigger: %s", platform)
         else:
             for p in RSSHUB_PLATFORMS:
                 poll_rsshub_platform(p)
             poll_douyin()
+            poll_xhs()
         path.unlink(missing_ok=True)
 
 

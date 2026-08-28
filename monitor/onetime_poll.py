@@ -139,11 +139,13 @@ def _creator_needs_rsshub(creator_id: int) -> bool:
 
 
 def _poll_platform(platform: str) -> None:
-    """单平台爬取；poll_rsshub_platform/poll_douyin 内部已写 poll_logs。"""
+    """单平台爬取；poll_rsshub_platform/poll_douyin/poll_xhs 内部已写 poll_logs。"""
     if platform in jobs.RSSHUB_PLATFORMS:
         jobs.poll_rsshub_platform(platform)
     elif platform == "douyin":
         jobs.poll_douyin()
+    elif platform == "xhs":
+        jobs.poll_xhs()
     else:
         logger.warning("未知平台，跳过: %s", platform)
 
@@ -156,16 +158,24 @@ def run(platform: str | None, creator_id: int | None) -> int:
         if creator_id is not None:
             if settings.rsshub_base_url and _creator_needs_rsshub(creator_id):
                 rsshub_proc = ensure_rsshub()
-            jobs.poll_rsshub_creator(creator_id)
+            with SessionLocal() as db:
+                from app.models import Creator
+
+                creator = db.get(Creator, creator_id)
+                cplatform = creator.platform if creator else ""
+            if cplatform == "xhs":
+                jobs.poll_xhs_creator(creator_id)
+            else:
+                jobs.poll_rsshub_creator(creator_id)
             return 0
         if platform:
             targets = [platform]
         else:
-            targets = list(jobs.RSSHUB_PLATFORMS) + ["douyin"]
+            targets = list(jobs.RSSHUB_PLATFORMS) + ["douyin", "xhs"]
         if settings.rsshub_base_url and any(p in jobs.RSSHUB_PLATFORMS for p in targets):
             rsshub_proc = ensure_rsshub()
         elif any(p in jobs.RSSHUB_PLATFORMS for p in targets):
-            logger.warning("RSSHUB_BASE_URL 未配置，跳过 RSSHub 平台（douyin 仍执行）")
+            logger.warning("RSSHUB_BASE_URL 未配置，跳过 RSSHub 平台（douyin/xhs 仍执行）")
         for p in targets:
             try:
                 _poll_platform(p)

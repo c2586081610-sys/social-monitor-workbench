@@ -53,6 +53,25 @@ def main() -> int:
             str(PROFILE_DIR), headless=True, viewport={"width": 1280, "height": 900},
             channel="msedge", args=["--no-proxy-server"],  # 系统 Edge 指纹 + 绕过梯子直连小红书
         )
+        # 注入 config/platform_cookies.json 的最新 xhs cookie（优先级高于旧 profile）
+        try:
+            import json as _json
+
+            _cfg = _json.loads((ROOT / "config" / "platform_cookies.json").read_text(encoding="utf-8"))
+            _ck = (_cfg.get("xhs") or {}).get("cookie") or ""
+            if _ck:
+                for _pair in _ck.split(";"):
+                    if "=" not in _pair:
+                        continue
+                    _name, _val = _pair.strip().split("=", 1)
+                    if not _name:
+                        continue
+                    try:
+                        ctx.add_cookies([{"name": _name, "value": _val, "domain": ".xiaohongshu.com", "path": "/"}])
+                    except Exception:
+                        pass
+        except Exception:
+            pass
         page = ctx.new_page()
         page.on("response", on_response)
         page.goto(url, wait_until="domcontentloaded", timeout=60000)
