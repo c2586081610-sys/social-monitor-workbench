@@ -73,13 +73,26 @@ class XhsMediacrawlerAdapter:
             url = f"https://www.xiaohongshu.com/explore/{nid}"
             if xsec:
                 url += f"?xsec_token={xsec}&xsec_source=pc_feed"
+            # time 字段：小红书 API 返回毫秒时间戳
+            ts = n.get("time") or 0
+            published_at = None
+            try:
+                t = int(ts)
+                if t > 10**12:
+                    t //= 1000
+                if t > 0:
+                    from datetime import datetime, timezone
+
+                    published_at = datetime.fromtimestamp(t, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            except (TypeError, ValueError, OSError):
+                pass
             items.append(
                 {
                     "platform": "xhs",
                     "external_id": nid,
                     "title": n.get("title") or "",
                     "url": url,
-                    "published_at": None,
+                    "published_at": published_at,
                     "content_type": "image" if not n.get("has_video") else "video",
                 }
             )

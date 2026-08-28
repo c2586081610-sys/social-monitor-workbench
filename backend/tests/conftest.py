@@ -15,6 +15,7 @@ if str(BACKEND_DIR) not in sys.path:
 _TMP = Path(tempfile.mkdtemp(prefix="aggregator-test-"))
 os.environ["ADMIN_TOKEN"] = "test-token"
 os.environ["DATABASE_PATH"] = str(_TMP / "aggregator.db")
+(_TMP / "media").mkdir(parents=True, exist_ok=True)  # FastAPI /media 静态挂载依赖
 os.environ["MEDIA_ROOT"] = str(_TMP / "media")
 os.environ["OBSIDIAN_ROOT"] = str(_TMP / "Obsidian")
 os.environ["WORKBUDDY_DIR"] = str(_TMP / "workbuddy")

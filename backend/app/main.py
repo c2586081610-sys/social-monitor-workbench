@@ -75,6 +75,12 @@ def healthz():
     return {"code": 0, "data": {"status": "ok"}, "message": ""}
 
 
+# 媒体静态服务：本地文件预览 + Obsidian 笔记图片相对路径解析（/media/<相对路径>）
+from fastapi.staticfiles import StaticFiles  # noqa: E402
+
+app.mount("/media", StaticFiles(directory=str(settings.media_root)), name="media")
+
+
 app.include_router(creators.router)
 app.include_router(works.router)
 app.include_router(groups.router)

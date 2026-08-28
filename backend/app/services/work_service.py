@@ -1,5 +1,8 @@
-"""works 业务：列表/详情/重试/关键帧/串行化。"""
+"""works 业务：列表/详情/重试/关键帧/本地视图/串行化。"""
 from __future__ import annotations
+
+import re
+from pathlib import Path
 
 from sqlalchemy.orm import Session
 
@@ -14,6 +17,28 @@ def _serialize_work(work) -> Work:
     data = Work.model_validate(work).model_dump()
     data["frame_count"] = frame_count(settings.media_root, work.frame_manifest_path)
     return Work(**data)
+
+
+_IMG_PATTERN = re.compile(r'(!?\[[^\]]*\]\()([^)]+)\)')
+
+
+def _resolve_note_images(note_abs: Path, md: str, media_root: Path) -> str:
+    """把 Obsidian 笔记里的相对路径图片/链接解析为 /media/ 绝对 URL（供网页渲染）。"""
+
+    def repl(m: re.Match) -> str:
+        full = m.group(0)
+        rel = m.group(2)
+        if rel.startswith(("http://", "https://", "/", "data:", "#")):
+            return full
+        try:
+            abs_path = (note_abs.parent / rel).resolve()
+            abs_path.relative_to(media_root)
+            url = "/media/" + abs_path.relative_to(media_root).as_posix()
+            return f"{m.group(1)}{url})"
+        except (ValueError, OSError):
+            return full
+
+    return _IMG_PATTERN.sub(repl, md)
 
 
 class WorkService:
@@ -73,6 +98,60 @@ class WorkService:
         base["transcript_path"] = work.transcript_path
         base["frame_manifest_path"] = work.frame_manifest_path
         return WorkDetail(**base)
+
+    def local_view(self, db: Session, work_id: int) -> dict:
+        """作品本地视图：原文件链接 + 本地文件清单 + AI 总结（Obsidian 笔记全文，图片路径解析为 /media）。"""
+        work = work_repo.get(db, work_id)
+        if work is None:
+            raise not_found("WORK_NOT_FOUND")
+        media_root = settings.media_root.resolve()
+
+        # ① 本地文件清单（media_path 兼容含/不含 media/ 前缀）
+        files: list[dict] = []
+        if work.media_path:
+            raw = work.media_path.replace("\\", "/")
+            if raw.startswith("media/"):
+                raw = raw[len("media/"):]
+            base = media_root / raw
+            try:
+                if base.is_dir():
+                    for f in sorted(base.rglob("*")):
+                        if f.is_file():
+                            rel = f.relative_to(media_root).as_posix()
+                            files.append(
+                                {
+                                    "name": f.name,
+                                    "size": f.stat().st_size,
+                                    "path": rel,
+                                    "url": f"/media/{rel}",
+                                }
+                            )
+                elif base.is_file():
+                    rel = base.relative_to(media_root).as_posix()
+                    files.append({"name": base.name, "size": base.stat().st_size, "path": rel, "url": f"/media/{rel}"})
+            except OSError:
+                pass
+
+        # ② AI 总结：Obsidian 笔记全文 + 相对路径图片解析
+        note_content: str | None = None
+        if work.note_path:
+            note_rel = work.note_path.replace("\\", "/")
+            if note_rel.startswith("Obsidian/"):
+                note_rel = note_rel[len("Obsidian/"):]
+            note_abs = settings.obsidian_root / note_rel
+            if note_abs.exists():
+                note_content = note_abs.read_text(encoding="utf-8", errors="ignore")
+                note_content = _resolve_note_images(note_abs, note_content, media_root)
+
+        return {
+            "id": work.id,
+            "title": work.title,
+            "platform": work.platform,
+            "url": work.url,
+            "note_path": work.note_path,
+            "media_files": files,
+            "note_content": note_content,
+        }
 
     def retry(self, db: Session, work_id: int) -> Work:
         work = work_repo.get(db, work_id)

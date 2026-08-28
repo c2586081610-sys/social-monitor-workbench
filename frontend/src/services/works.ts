@@ -7,6 +7,7 @@ import type {
   Work,
   WorkDetail,
   WorkListParams,
+  WorkLocalView,
   WorkPage,
 } from '../types/api.d';
 
@@ -16,6 +17,10 @@ export function listWorks(params: WorkListParams = {}): Promise<WorkPage> {
 
 export function getWork(id: number): Promise<WorkDetail> {
   return getJson<WorkDetail>(`/api/v1/works/${id}`);
+}
+
+export function getWorkLocalView(id: number): Promise<WorkLocalView> {
+  return getJson<WorkLocalView>(`/api/v1/works/${id}/local-view`);
 }
 
 export function retryWork(id: number): Promise<Work> {

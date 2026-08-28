@@ -50,6 +50,12 @@ def get_work(work_id: int, db: Session = Depends(get_db)):
     return ok(detail.model_dump())
 
 
+@router.get("/{work_id}/local-view", status_code=200)
+def get_work_local_view(work_id: int, db: Session = Depends(get_db)):
+    """作品本地视图：原文件链接 + 本地文件清单 + AI 总结（笔记全文）。"""
+    return ok(work_service.local_view(db, work_id))
+
+
 @router.post("/{work_id}/retry", status_code=200)
 def retry_work(work_id: int, db: Session = Depends(get_db)):
     work = work_service.retry(db, work_id)

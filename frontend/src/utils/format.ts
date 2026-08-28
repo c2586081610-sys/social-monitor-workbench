@@ -61,3 +61,17 @@ export function formatRelativeTime(iso: string | null | undefined): string {
   const days = Math.floor(hours / 24);
   return `${days} 天前`;
 }
+
+/** 字节数人类可读（B/KB/MB/GB）。 */
+export function formatBytes(bytes?: number | null): string {
+  if (bytes === null || bytes === undefined || Number.isNaN(bytes)) return '—';
+  if (bytes < 1024) return `${bytes} B`;
+  const units = ['KB', 'MB', 'GB', 'TB'];
+  let v = bytes;
+  let i = -1;
+  do {
+    v /= 1024;
+    i += 1;
+  } while (v >= 1024 && i < units.length - 1);
+  return `${v.toFixed(1)} ${units[i]}`;
+}

@@ -134,6 +134,23 @@ export interface WorkPage extends PageMeta {
   items: Work[];
 }
 
+export interface LocalMediaFile {
+  name: string;
+  size: number;
+  path: string;
+  url: string;
+}
+
+export interface WorkLocalView {
+  id: number;
+  title: string;
+  platform: Platform;
+  url: string | null;
+  note_path: string | null;
+  media_files: LocalMediaFile[];
+  note_content: string | null;
+}
+
 export interface WorkListParams {
   group_id?: number;
   creator_id?: number;

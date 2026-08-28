@@ -1,7 +1,7 @@
 /** P4 作品详情：三张状态卡（下载/转写/AI笔记）+ 打开 AI 笔记 + 失败原因 + 重试 + 关键帧 + 标签。 */
 import { useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { ArrowLeft, AudioLines, ExternalLink, FileText, RotateCcw, Sparkles } from 'lucide-react';
+import { ArrowLeft, AudioLines, ExternalLink, FileText, MonitorPlay, RotateCcw, Sparkles } from 'lucide-react';
 import { StatusBadge } from '../components/common/StatusBadge';
 import PlatformBadge from '../components/common/PlatformBadge';
 import OpenNoteButton from '../components/work/OpenNoteButton';
@@ -119,6 +119,13 @@ export default function WorkDetailPage() {
               <ExternalLink className="h-4 w-4" />
               原作品
             </a>
+            <Link
+              to={`/works/${workId}/local`}
+              className="inline-flex items-center gap-1.5 rounded-md border border-line px-3 py-1.5 text-sm text-ink-secondary transition-colors hover:bg-sidebar"
+            >
+              <MonitorPlay className="h-4 w-4" />
+              本地视图
+            </Link>
           </div>
         </div>
 
