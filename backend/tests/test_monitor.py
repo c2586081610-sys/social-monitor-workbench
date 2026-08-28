@@ -24,12 +24,29 @@ def test_monitor_poll_status_empty(client, auth_headers):
     for item in items.values():
         assert item["last_poll_at"] is None
         assert item["status"] == "never"
+        assert item["new_works"] == 0
+        assert item["detail"] is None
 
 
 def test_monitor_poll_status_latest_per_platform(client, auth_headers, db):
-    db.add(PollLog(platform="bilibili", status="ok", started_at=now_iso(), finished_at="2026-08-27T01:00:00Z"))
-    db.add(PollLog(platform="bilibili", status="failed", started_at=now_iso(), finished_at="2026-08-27T02:00:00Z"))
-    db.add(PollLog(platform="twitter", status="ok", started_at=now_iso(), finished_at="2026-08-27T03:00:00Z"))
+    db.add(
+        PollLog(
+            platform="bilibili", status="ok", started_at=now_iso(),
+            finished_at="2026-08-27T01:00:00Z", new_works=2,
+        )
+    )
+    db.add(
+        PollLog(
+            platform="bilibili", status="failed", detail="route 失效 HTTP 502",
+            started_at=now_iso(), finished_at="2026-08-27T02:00:00Z", new_works=0,
+        )
+    )
+    db.add(
+        PollLog(
+            platform="twitter", status="ok", started_at=now_iso(),
+            finished_at="2026-08-27T03:00:00Z", new_works=5, detail=None,
+        )
+    )
     db.commit()
 
     resp = client.get("/api/v1/monitor/poll-status", headers=auth_headers)
@@ -37,9 +54,31 @@ def test_monitor_poll_status_latest_per_platform(client, auth_headers, db):
     items = {item["platform"]: item for item in resp.json()["data"]["items"]}
     assert items["bilibili"]["last_poll_at"] == "2026-08-27T02:00:00Z"
     assert items["bilibili"]["status"] == "failed"
+    assert items["bilibili"]["new_works"] == 0
+    assert items["bilibili"]["detail"] == "route 失效 HTTP 502"
     assert items["twitter"]["last_poll_at"] == "2026-08-27T03:00:00Z"
     assert items["twitter"]["status"] == "ok"
+    assert items["twitter"]["new_works"] == 5
+    assert items["twitter"]["detail"] is None
     assert items["douyin"]["last_poll_at"] is None
+    assert items["douyin"]["new_works"] == 0
+
+
+def test_poll_logs_new_works_migration_and_default(client, auth_headers, db):
+    """验证 v0.6 迁移：poll_logs 存在 new_works 列且模型默认 0。"""
+    from sqlalchemy import text
+
+    cols = {row[1] for row in db.execute(text("PRAGMA table_info(poll_logs)"))}
+    assert "new_works" in cols
+
+    log = PollLog(platform="xhs", status="ok", started_at=now_iso(), finished_at=now_iso())
+    db.add(log)
+    db.commit()
+    assert log.new_works == 0
+
+    resp = client.get("/api/v1/monitor/poll-status", headers=auth_headers)
+    items = {item["platform"]: item for item in resp.json()["data"]["items"]}
+    assert items["xhs"]["new_works"] == 0
 
 
 def test_monitor_poll_now_validation(client, auth_headers):

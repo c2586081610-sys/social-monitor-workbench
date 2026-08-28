@@ -123,6 +123,46 @@ def test_health_cookie_and_system(client, auth_headers):
     assert components["workbuddy_pending"] == "online"
 
 
+def test_health_downloader_unknown_when_unconfigured(client, auth_headers):
+    """DOWNLOADER_BIN 与 DOUYIN_DOWNLOADER_DIR 均未配置 → unknown + 未配置下载器。"""
+    resp = client.get("/api/v1/health/system", headers=auth_headers)
+    assert resp.status_code == 200
+    downloader = next(
+        item for item in resp.json()["data"]["items"] if item["component"] == "downloader"
+    )
+    assert downloader["status"] == "unknown"
+    assert downloader["detail"] == "未配置下载器"
+
+
+def test_health_downloader_probe_any_config(tmp_path):
+    """任一配置即 online/ready；路径缺失为 offline；detail 提示缺哪个键。"""
+    from app.core.config import settings
+    from app.services.health_service import health_service
+
+    orig_bin, orig_dy = settings.downloader_bin, settings.douyin_downloader_dir
+    try:
+        # 两者都无 → unknown
+        settings.downloader_bin, settings.douyin_downloader_dir = "", ""
+        assert health_service._downloader_status() == "unknown"
+        assert health_service._downloader_detail() == "未配置下载器"
+
+        # 仅 DOUYIN_DOWNLOADER_DIR 存在路径 → online
+        settings.downloader_bin, settings.douyin_downloader_dir = "", str(tmp_path)
+        assert health_service._downloader_status() == "online"
+        assert health_service._downloader_detail() is None
+
+        # 仅 DOWNLOADER_BIN 存在路径 → online
+        settings.downloader_bin, settings.douyin_downloader_dir = str(tmp_path), ""
+        assert health_service._downloader_status() == "online"
+
+        # 配置了但路径不存在 → offline + 提示
+        settings.downloader_bin, settings.douyin_downloader_dir = "", str(tmp_path / "missing")
+        assert health_service._downloader_status() == "offline"
+        assert health_service._downloader_detail() == "配置的下载器路径不存在: DOUYIN_DOWNLOADER_DIR"
+    finally:
+        settings.downloader_bin, settings.douyin_downloader_dir = orig_bin, orig_dy
+
+
 def test_monitor_poll_offline_when_no_heartbeat(client, auth_headers):
     # 测试环境未启动监控层 → 1002 MONITOR_OFFLINE
     resp = client.post("/api/v1/monitor/poll", json={}, headers=auth_headers)

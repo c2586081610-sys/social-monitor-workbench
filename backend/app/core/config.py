@@ -67,6 +67,7 @@ class Settings:
         self.douyin_cdp_profile_dir: str = os.getenv("DOUYIN_CDP_PROFILE_DIR", "")
         # 流水线
         self.downloader_bin: str = os.getenv("DOWNLOADER_BIN", "")
+        self.douyin_downloader_dir: str = os.getenv("DOUYIN_DOWNLOADER_DIR", "")
         self.transcriber_engine: str = os.getenv("TRANSCRIBER_ENGINE", "")
         self.fernet_key: str = os.getenv("FERNET_KEY", "")
 

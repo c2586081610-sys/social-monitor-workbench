@@ -71,16 +71,36 @@ class MonitorService:
         return {"triggered": True, "pid": proc.pid}
 
     def poll_status(self, db: Session) -> dict:
-        """各平台最近一次爬取时间（读 poll_logs，按平台取最新 finished_at）。"""
+        """各平台最近一次爬取摘要（读 poll_logs，按平台取最新 finished_at）。
+
+        返回每平台 {platform, last_poll_at, status, new_works, detail}：
+        - status: ok / fail / failed / never（尚未爬取过）
+        - new_works: 本次爬取检测到的新作品数
+        - detail: 失败原因（如 no_rsshub_route、CDP 未启用、route 失效）
+        """
         latest = health_repo.latest_poll_logs(db)
         items = []
         for platform in _PLATFORM_ORDER:
             log = latest.get(platform)
             if log is None:
-                items.append({"platform": platform, "last_poll_at": None, "status": "never"})
+                items.append(
+                    {
+                        "platform": platform,
+                        "last_poll_at": None,
+                        "status": "never",
+                        "new_works": 0,
+                        "detail": None,
+                    }
+                )
             else:
                 items.append(
-                    {"platform": platform, "last_poll_at": log.finished_at, "status": log.status}
+                    {
+                        "platform": platform,
+                        "last_poll_at": log.finished_at,
+                        "status": log.status,
+                        "new_works": log.new_works,
+                        "detail": log.detail,
+                    }
                 )
         return {"items": items}
 

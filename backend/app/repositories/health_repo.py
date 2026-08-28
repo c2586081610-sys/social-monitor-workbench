@@ -49,6 +49,7 @@ def create_poll_log(
     detail: str | None = None,
     started_at: str | None = None,
     finished_at: str | None = None,
+    new_works: int = 0,
 ) -> PollLog:
     log = PollLog(
         platform=platform,
@@ -56,6 +57,7 @@ def create_poll_log(
         detail=detail,
         started_at=started_at or now_iso(),
         finished_at=finished_at or now_iso(),
+        new_works=new_works or 0,
     )
     db.add(log)
     db.flush()

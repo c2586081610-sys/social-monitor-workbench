@@ -77,6 +77,7 @@ def poll_rsshub_platform(platform: str) -> None:
         creators = db.execute(
             select(Creator).where(Creator.platform == platform, Creator.enabled == 1)
         ).scalars().all()
+        total_new = 0
         for creator in creators:
             try:
                 entries = adapter.fetch_entries(platform, creator.external_id)
@@ -87,11 +88,12 @@ def poll_rsshub_platform(platform: str) -> None:
                 logger.warning("%s 轮询失败 category=%s msg=%s", platform, exc.category, exc.message)
                 continue
             new_count = _upsert_creator_entries(db, creator, entries)
+            total_new += new_count
             db.commit()
             if new_count:
                 logger.info("%s 博主 %s 新增 %d 条", platform, creator.name, new_count)
         _update_cookie(db, platform, "OK", None)
-        health_repo.create_poll_log(db, platform, "ok", detail=None, started_at=started)
+        health_repo.create_poll_log(db, platform, "ok", detail=None, started_at=started, new_works=total_new)
         db.commit()
 
 
@@ -126,7 +128,7 @@ def poll_rsshub_creator(creator_id: int) -> None:
             return
         new_count = _upsert_creator_entries(db, creator, entries)
         _update_cookie(db, platform, "OK", None)
-        health_repo.create_poll_log(db, platform, "ok", detail=None, started_at=started)
+        health_repo.create_poll_log(db, platform, "ok", detail=None, started_at=started, new_works=new_count)
         db.commit()
         if new_count:
             logger.info("博主 %s 新增 %d 条", creator.name, new_count)
@@ -146,6 +148,7 @@ def poll_douyin() -> None:
         creators = db.execute(
             select(Creator).where(Creator.platform == "douyin", Creator.enabled == 1)
         ).scalars().all()
+        total_new = 0
         for creator in creators:
             entries = session.poll_creator(creator)
             for item in entries:
@@ -156,12 +159,13 @@ def poll_douyin() -> None:
                     creator_id=creator.id, source_type="monitor",
                 )
                 if work.status == "NEW":
+                    total_new += 1
                     task_repo.upsert(db, work.id, "parse", "pending")
                     work.status = "QUEUED"
                     creator.last_work_at = now_iso()
             creator.last_poll_at = now_iso()
             db.commit()
-        health_repo.create_poll_log(db, "douyin", "ok", detail=None, started_at=started)
+        health_repo.create_poll_log(db, "douyin", "ok", detail=None, started_at=started, new_works=total_new)
         db.commit()
 
 

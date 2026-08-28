@@ -17,6 +17,8 @@ class PollLog(Base):
     finished_at: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="ok")
     detail: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # v0.6：本次爬取检测到的新作品数（0 = 无新增；detail 保留失败原因）
+    new_works: Mapped[int] = mapped_column(nullable=False, default=0)
     created_at: Mapped[str] = mapped_column(Text, nullable=False, default=now_iso)
     updated_at: Mapped[str] = mapped_column(Text, nullable=False, default=now_iso, onupdate=now_iso)
 

@@ -21,6 +21,9 @@ os.environ["WORKBUDDY_DIR"] = str(_TMP / "workbuddy")
 os.environ["MONITOR_HEARTBEAT_TIMEOUT"] = "60"
 os.environ["RSSHUB_BASE_URL"] = ""
 os.environ["CHANGEDETECTION_URL"] = ""
+os.environ["DOWNLOADER_BIN"] = ""
+os.environ["DOUYIN_DOWNLOADER_DIR"] = ""
+os.environ["TRANSCRIBER_ENGINE"] = ""
 
 from fastapi.testclient import TestClient  # noqa: E402
 

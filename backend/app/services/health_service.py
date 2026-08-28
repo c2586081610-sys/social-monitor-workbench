@@ -102,20 +102,33 @@ class HealthService:
         return items
 
     @staticmethod
-    def _downloader_status() -> str:
-        if not settings.downloader_bin:
+    def _downloader_paths() -> list[tuple[str, str]]:
+        """已配置的下载器路径 [(env_name, path)]：DOWNLOADER_BIN 与 DOUYIN_DOWNLOADER_DIR 任一即可。"""
+        paths: list[tuple[str, str]] = []
+        if settings.downloader_bin:
+            paths.append(("DOWNLOADER_BIN", settings.downloader_bin))
+        if settings.douyin_downloader_dir:
+            paths.append(("DOUYIN_DOWNLOADER_DIR", settings.douyin_downloader_dir))
+        return paths
+
+    @classmethod
+    def _downloader_status(cls) -> str:
+        from pathlib import Path
+
+        paths = cls._downloader_paths()
+        if not paths:
             return "unknown"
+        return "online" if any(Path(path).exists() for _, path in paths) else "offline"
+
+    @classmethod
+    def _downloader_detail(cls) -> str | None:
         from pathlib import Path
 
-        return "online" if Path(settings.downloader_bin).exists() else "offline"
-
-    @staticmethod
-    def _downloader_detail() -> str | None:
-        if not settings.downloader_bin:
-            return "未配置 DOWNLOADER_BIN"
-        from pathlib import Path
-
-        return None if Path(settings.downloader_bin).exists() else "配置的下载器二进制不存在"
+        paths = cls._downloader_paths()
+        if not paths:
+            return "未配置下载器"
+        missing = [name for name, path in paths if not Path(path).exists()]
+        return f"配置的下载器路径不存在: {', '.join(missing)}" if missing else None
 
     @staticmethod
     def _transcriber_status() -> str:
