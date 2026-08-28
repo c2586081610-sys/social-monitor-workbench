@@ -35,9 +35,17 @@
 | `capture_xhs_login.py` | 小红书 Playwright 交互登录 → cookie 导出 |
 | `extract_xhs_cookie.py` | 从浏览器 cookie 库提取小红书 cookie（Edge 被 AppContainer 保护时不可用） |
 | `extract_douyin_cookie.py` | 抖音 cookie 提取（DPAPI + AES-GCM） |
-| `xhs_fetch_notes.py` | 小红书博主笔记列表（Playwright 拦截 user_posted API，noteId+xsec_token） |
-| `xhs_fetch_comments.py` | 小红书单笔记全量评论（拦截 comment API，含置顶识别/按赞排序） |
-| `mc_xhs_comments.py` | MediaCrawler 评论采集封装（读项目 cookie） |
+| `export_dy_cookie_edge.py` / `export_xhs_cookie_edge.py` | **从 Edge 真实 profile 提取抖音/小红书 cookie**（AppContainer 保护下唯一可行路径；前提 Edge 已关闭） |
+| `xhs_fetch_notes.py` | 小红书博主笔记列表（**SSR state 提取为主** + user_posted 拦截兜底；note_id+xsec_token+time+cover，2026-08-28 修复 API 降级漏新作品） |
+| `xhs_fetch_comments.py` | 小红书单笔记评论（拦截 comment API，含置顶识别/按赞排序） |
+| `xhs_voice_extract.py` | 小红书语音评论转写提取（DOM audio-comment-container 服务端转写，需日常 Edge CDP 9222） |
+| `xhs_comment_analyze.py` | 评论完整分析（层级重组/置顶/点赞排序/图片/语音标记） |
+| `xhs_note_dl.py` | 小红书作品图文下载（浏览器拦截，带 xsec_token） |
+| `mc_xhs_comments.py` | MediaCrawler 评论采集封装（detail 模式全量，上限 1000，需带 xsec_token 的完整 URL） |
+| `xhs_pull_all.py` | **小红书博主作品批量扒取**（自动拉列表 → 逐篇 MediaCrawler detail 内容+全量评论；断点续传/风控间隔） |
+| `fetch_works_cover.py` | **作品封面下载到本地**（各平台防盗链需对应 Referer，存 media/cover/{id}.jpg，DB cover_url 改本地路径） |
+| `mc_comment_report.py` | 评论报告汇总 |
+| `xhs_comments_full.py` | 评论全量采集（旧版） |
 
 ### 第三方工具（git clone 安装，不入库）
 
@@ -56,6 +64,8 @@
 # 1. 后端
 cd backend && pip install -r requirements.txt
 cp .env.example .env   # 配置 ADMIN_TOKEN 等
+# 可选：MEDIA_BASE_URL=http://127.0.0.1:8000（默认已是此值；NAS/局域网部署时改为实际地址，
+#        否则前端跨源加载作品封面/媒体会 404 —— 后端返回的 /media/... 相对路径会被浏览器按前端域名解析）
 uvicorn app.main:app --port 8000
 
 # 2. 前端
@@ -69,14 +79,31 @@ cd monitor && python main.py
 start_all.bat
 ```
 
-## 平台接入状态（端到端实测已通）
+## 媒体与封面机制（v0.6）
 
-| 平台 | 下载 | 转写/图文 | 评论 | 说明 |
-|------|------|-----------|------|------|
-| 抖音 | ✅ jiji262 480p | ✅ paraformer 转写+词库抽帧 | ✅ MediaCrawler | cookie 用 Playwright profile |
-| B站 | ✅ yutto 360P | ✅ paraformer 转写+301帧 | ✅ MediaCrawler | 无需登录 |
-| 小红书 | ✅ XHS-Downloader（带 xsec_token） | ✅ 图文直存+评论榜单 | ✅ MediaCrawler/自研 | cookie 用 Playwright profile；置顶评论按第一性原理识别 |
-| 推特X | ✅ yt-dlp/curl_cffi（需代理） | ✅ 图文直存 | ⏳ 需海外 VPS（Twikit/Scweet） | 国内需代理；TLS 指纹须 curl_cffi |
+```
+平台封面(cover_url) → fetch_works_cover.py 下载到 media/cover/{work_id}.jpg（带平台 Referer 绕防盗链）
+  → DB cover_url 更新为 /media/cover/{work_id}.jpg
+  → FastAPI /media 静态服务（main.py mount）
+  → 序列化时按 MEDIA_BASE_URL 拼绝对 URL（前端不同源可加载）
+```
+
+- 各平台适配器落库时写入 cover_url：小红书=SSR `cover.urlPre`、抖音=MediaCrawler `video.cover.url_list[0]`、B站/推特=RSSHub 条目 `image`（推文取首图）
+- 新爬取的作品封面自动落库；历史作品用 `python tools/fetch_works_cover.py` 一次性回填下载
+- 纯文本推文/无封面笔记无图可提取 → 前端占位兜底
+- **部署注意**：`backend/.env`（不是项目根 .env，config.py 按 backend/ 定位）设 `MEDIA_BASE_URL=<本机后端地址>`，否则封面为相对路径在跨源时 404
+
+## 平台接入状态（端到端实测已通，2026-08-28 四平台自动监测 + 封面就绪）
+
+| 平台 | 自动监测 | 下载 | 转写/图文 | 评论 | 封面 | 说明 |
+|------|----------|------|-----------|------|------|------|
+| 抖音 | ✅ MediaCrawler DouYinClient（Edge cookie，首页 1 页增量） | ✅ jiji262 480p | ✅ paraformer+词库抽帧 | ✅ MediaCrawler | ✅ 20/20 | cookie 过期重跑 `export_dy_cookie_edge.py` |
+| B站 | ✅ RSSHub bilibili 路由 | ✅ yutto 360P | ✅ paraformer+301帧 | ✅ MediaCrawler | ✅ 2/2 | 无需登录 |
+| 小红书 | ✅ Playwright 拦截 user_posted + **SSR state 提取**（cookie 降级不漏新作品） | ✅ XHS-Downloader（带 xsec_token） | ✅ 图文直存+评论榜单 | ✅ MediaCrawler 全量（上限 1000）/自研 | ✅ 94/104 | cookie 过期重跑 `export_xhs_cookie_edge.py`；批量扒取用 `xhs_pull_all.py` |
+| 推特X | ✅ RSSHub twitter 路由（需代理） | ✅ yt-dlp/curl_cffi | ✅ 图文直存 | ⏳ 需海外 VPS | ✅ 7/13（纯文本无图） | 国内需代理；TLS 指纹须 curl_cffi；封面=推文首图 |
+
+> 监测方式说明：抖音/小红书用本地 cookie + 浏览器方案（不依赖 RSSHub）；B站/推特走 RSSHub 稳定路由。
+> "立即爬取"按钮 = 后端拉起一次性爬取子进程（onetime_poll.py），跑完自动关闭，无常驻。
 
 ## 文档索引
 
