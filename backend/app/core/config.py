@@ -57,6 +57,8 @@ class Settings:
         # 外部服务（监控层健康探测；留空视为未配置）
         self.rsshub_base_url: str = os.getenv("RSSHUB_BASE_URL", "").rstrip("/")
         self.changedetection_url: str = os.getenv("CHANGEDETECTION_URL", "").rstrip("/")
+        # 抖音监测：MediaCrawler 目录（复用其 cookie 登录态 + DouYinClient）
+        self.mediacrawler_dir: Path = _env_path("MEDIACRAWLER_DIR", ws / "tools" / "mediacrawler")
         # 监控层调度
         self.poll_rsshub_interval: int = int(os.getenv("POLL_RSSHUB_INTERVAL", "300"))
         self.poll_douyin_interval: int = int(os.getenv("POLL_DOUYIN_INTERVAL", "600"))

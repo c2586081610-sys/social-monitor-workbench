@@ -21,6 +21,7 @@ from app.utils.timeutil import now_iso, to_date  # noqa: E402
 from monitor.pipeline import download, frames, notify, transcribe  # noqa: E402
 from monitor.pipeline.download import PipelineOfflineError  # noqa: E402
 from monitor.platforms.douyin_cdp import DouyinCDPSession  # noqa: E402
+from monitor.platforms.douyin_mediacrawler import DouyinMediaCrawlerAdapter  # noqa: E402
 from monitor.platforms.rsshub import RSSHubError, RSSHubRouterAdapter  # noqa: E402
 
 logger = logging.getLogger("monitor.jobs")
@@ -135,37 +136,38 @@ def poll_rsshub_creator(creator_id: int) -> None:
 
 
 def poll_douyin() -> None:
-    """抖音 CDP 占位轮询（可配置开关，K1 间隔默认 ≥10min）。"""
-    session = DouyinCDPSession(settings.douyin_cdp_enabled, settings.douyin_cdp_profile_dir)
-    status = session.check()
+    """抖音监测：复用 MediaCrawler 登录态 + DouYinClient 抓首页最新（低风控，替代 CDP 占位）。
+
+    无 MediaCrawler/无 cookie → fail（poll_logs 记 detail）；单博主异常不阻塞其余。
+    """
+    adapter = DouyinMediaCrawlerAdapter(settings.mediacrawler_dir)
     started = now_iso()
     with SessionLocal() as db:
-        _update_cookie(db, "douyin", status["status"], status["note"])
-        if status["status"] != "OK":
-            health_repo.create_poll_log(db, "douyin", "failed", detail=status["note"] or "cdp_not_ready", started_at=started)
+        if not adapter.available():
+            msg = "MediaCrawler 未就绪（tools/mediacrawler 缺失或 COOKIES 为空，可用 tools/export_dy_cookie.py 导出）"
+            _update_cookie(db, "douyin", "UNKNOWN", msg)
+            health_repo.create_poll_log(db, "douyin", "failed", detail=msg, started_at=started)
             db.commit()
             return
         creators = db.execute(
             select(Creator).where(Creator.platform == "douyin", Creator.enabled == 1)
         ).scalars().all()
         total_new = 0
+        ok_count = 0
         for creator in creators:
-            entries = session.poll_creator(creator)
-            for item in entries:
-                work = work_repo.upsert(
-                    db, "douyin", item["external_id"],
-                    title=item["title"], url=item["url"],
-                    published_at=item.get("published_at"),
-                    creator_id=creator.id, source_type="monitor",
-                )
-                if work.status == "NEW":
-                    total_new += 1
-                    task_repo.upsert(db, work.id, "parse", "pending")
-                    work.status = "QUEUED"
-                    creator.last_work_at = now_iso()
-            creator.last_poll_at = now_iso()
-            db.commit()
-        health_repo.create_poll_log(db, "douyin", "ok", detail=None, started_at=started, new_works=total_new)
+            sec_uid = creator.external_id or ""
+            if not sec_uid:
+                continue
+            try:
+                entries = adapter.poll_creator(sec_uid)
+            except Exception as e:  # noqa: BLE001  单博主失败不阻塞其余
+                logger.warning("douyin 博主 %s 爬取异常: %s", creator.name, e)
+                health_repo.create_poll_log(db, "douyin", "fail", detail=f"mediacrawler 异常: {str(e)[:120]}", started_at=started)
+                continue
+            total_new += _upsert_creator_entries(db, creator, entries)
+            ok_count += 1
+        _update_cookie(db, "douyin", "OK" if ok_count else "FAIL", "MediaCrawler 监测")
+        health_repo.create_poll_log(db, "douyin", "ok" if ok_count else "fail", detail=None, started_at=started, new_works=total_new)
         db.commit()
 
 
