@@ -1,4 +1,4 @@
-/** 作品列表项：封面占位 + 标题/时间 + 三件套进度 + 状态徽标 + 操作（重试 / 打开笔记 / 详情）。 */
+/** 作品列表项：原封面 + 标题/时间 + 三件套进度 + 状态徽标 + 操作（重试 / 打开笔记 / 详情）。 */
 import { Link } from 'react-router-dom';
 import { ExternalLink, ImageIcon, RotateCcw } from 'lucide-react';
 import { useState } from 'react';
@@ -20,6 +20,7 @@ interface WorkListItemProps {
 
 export default function WorkListItem({ work, onChanged }: WorkListItemProps) {
   const [retryError, setRetryError] = useState<string | null>(null);
+  const [coverError, setCoverError] = useState(false);
   const retryMutation = useMutation((id: number) => retryWork(id));
 
   const handleRetry = async () => {
@@ -34,11 +35,21 @@ export default function WorkListItem({ work, onChanged }: WorkListItemProps) {
 
   return (
     <div className="flex gap-3 rounded-lg border border-line bg-surface p-3 shadow-card transition-colors hover:border-primary/40">
-      {/* 封面占位（媒体为本地文件，前端无静态服务，用平台图标占位） */}
+      {/* 原封面（cover_url 为平台外链；无封面或加载失败用占位） */}
       <Link to={`/works/${work.id}`} className="shrink-0" aria-label="查看作品详情">
-        <span className="flex h-16 w-24 items-center justify-center rounded-md bg-sidebar text-ink-muted">
-          <ImageIcon className="h-6 w-6" />
-        </span>
+        {work.cover_url && !coverError ? (
+          <img
+            src={work.cover_url}
+            alt=""
+            loading="lazy"
+            onError={() => setCoverError(true)}
+            className="h-16 w-24 rounded-md border border-line object-cover"
+          />
+        ) : (
+          <span className="flex h-16 w-24 items-center justify-center rounded-md bg-sidebar text-ink-muted">
+            <ImageIcon className="h-6 w-6" />
+          </span>
+        )}
       </Link>
 
       <div className="min-w-0 flex-1">

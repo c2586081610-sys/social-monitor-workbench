@@ -31,6 +31,8 @@ class Work(BaseModel):
     task_id: str | None
     media_path: str | None
     note_path: str | None
+    content_type: str = "video"
+    cover_url: str | None = None
     frame_count: int = 0
     retry_count: int = 0
     last_error: str | None

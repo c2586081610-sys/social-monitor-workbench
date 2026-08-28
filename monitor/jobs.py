@@ -58,6 +58,7 @@ def _upsert_creator_entries(db: Session, creator: Creator, entries: list[dict]) 
             source_type="monitor",
             content_type=item.get("content_type", "video"),
             media_urls=json.dumps(media_urls, ensure_ascii=False) if media_urls else None,
+            cover_url=item.get("cover_url"),
         )
         if work.status == "NEW":
             new_count += 1

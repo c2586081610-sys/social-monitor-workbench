@@ -46,6 +46,7 @@ def _parse_ssr_notes(html: str) -> list[dict]:
         t_raw = _grab(r'"time":(\d+)')
         liked = _grab(r'"likedCount":(\d+)')
         comment = _grab(r'"commentCount":(\d+)')
+        cover = _grab(r'"cover":\{"urlPre":"([^"]*)"') or _grab(r'"urlDefault":"([^"]*)"')
         if not nid or not title:
             continue
         notes.append(
@@ -57,7 +58,7 @@ def _parse_ssr_notes(html: str) -> list[dict]:
                 "liked_count": liked or "0",
                 "comment_count": comment or "0",
                 "has_video": False,
-                "cover": "",
+                "cover": (cover or "").replace("\\u002F", "/"),
                 "time": int(t_raw) if t_raw else 0,  # 毫秒
             }
         )

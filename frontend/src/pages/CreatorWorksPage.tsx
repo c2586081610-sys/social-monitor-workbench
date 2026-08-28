@@ -16,7 +16,7 @@ export default function CreatorWorksPage() {
   const [tabKey, setTabKey] = useState('all');
 
   const creatorQuery = useAsyncData(() => getCreator(creatorId), [creatorId]);
-  const worksQuery = useAsyncData(() => listCreatorWorks(creatorId, { page: 1, limit: 100 }), [creatorId]);
+  const worksQuery = useAsyncData(() => listCreatorWorks(creatorId, { page: 1, limit: 200 }), [creatorId]);
 
   const works = worksQuery.data?.items ?? [];
   const hasRunning = useMemo(() => works.some((w) => RUNNING_STATUSES.has(w.status)), [works]);

@@ -21,7 +21,7 @@ def list_creators(
     platform: str | None = Query(default=None),
     q: str | None = Query(default=None, max_length=100),
     page: int = Query(default=1, ge=1),
-    limit: int = Query(default=20, ge=1, le=100),
+    limit: int = Query(default=20, ge=1, le=200),
 ):
     result = creator_service.list(db, group_id, platform, q, page, limit)
     return ok(result.model_dump())
@@ -55,7 +55,7 @@ def list_creator_works(
     creator_id: int,
     db: Session = Depends(get_db),
     page: int = Query(default=1, ge=1),
-    limit: int = Query(default=20, ge=1, le=100),
+    limit: int = Query(default=20, ge=1, le=200),
 ):
     result: WorkPage = work_service.list_by_creator(db, creator_id, page, limit)
     return ok(result.model_dump())

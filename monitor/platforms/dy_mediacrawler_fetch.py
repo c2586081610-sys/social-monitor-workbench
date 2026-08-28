@@ -66,6 +66,13 @@ async def _fetch(sec_uid: str, count: int) -> list[dict]:
             aid = str(aw.get("aweme_id") or "")
             if not aid:
                 continue
+            # 封面：video.cover.url_list[0]（原平台封面）
+            cover = ""
+            try:
+                cover = (aw.get("video") or {}).get("cover", {}).get("url_list") or []
+                cover = cover[0] if cover else ""
+            except Exception:
+                cover = ""
             items.append(
                 {
                     "platform": "douyin",
@@ -74,6 +81,7 @@ async def _fetch(sec_uid: str, count: int) -> list[dict]:
                     "url": f"https://www.douyin.com/video/{aid}",
                     "published_at": _iso(aw.get("create_time")),
                     "content_type": "video",
+                    "cover_url": cover or None,
                 }
             )
         return items

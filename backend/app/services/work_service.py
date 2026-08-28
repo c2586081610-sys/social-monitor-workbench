@@ -13,9 +13,20 @@ from app.schemas.work import TaskStage, Work, WorkDetail, WorkPage
 from app.utils.manifest import frame_count, manifest_items, read_manifest
 
 
+def _abs_media(path: str | None) -> str | None:
+    """将 /media/... 相对路径转为 MEDIA_BASE_URL 下的绝对 URL（前端跨源显示用）。"""
+    if not path or not path.startswith("/"):
+        return path
+    base = settings.media_base_url
+    if not base:
+        return path  # 同源开发环境保留相对路径
+    return f"{base}{path}"
+
+
 def _serialize_work(work) -> Work:
     data = Work.model_validate(work).model_dump()
     data["frame_count"] = frame_count(settings.media_root, work.frame_manifest_path)
+    data["cover_url"] = _abs_media(data.get("cover_url"))
     return Work(**data)
 
 
@@ -123,12 +134,12 @@ class WorkService:
                                     "name": f.name,
                                     "size": f.stat().st_size,
                                     "path": rel,
-                                    "url": f"/media/{rel}",
+                                    "url": _abs_media(f"/media/{rel}") or f"/media/{rel}",
                                 }
                             )
                 elif base.is_file():
                     rel = base.relative_to(media_root).as_posix()
-                    files.append({"name": base.name, "size": base.stat().st_size, "path": rel, "url": f"/media/{rel}"})
+                    files.append({"name": base.name, "size": base.stat().st_size, "path": rel, "url": _abs_media(f"/media/{rel}") or f"/media/{rel}"})
             except OSError:
                 pass
 

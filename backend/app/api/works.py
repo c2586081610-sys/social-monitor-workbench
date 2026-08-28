@@ -26,7 +26,7 @@ def list_works(
     unclassified: bool = Query(default=False),
     q: str | None = Query(default=None, max_length=200),
     page: int = Query(default=1, ge=1),
-    limit: int = Query(default=20, ge=1, le=100),
+    limit: int = Query(default=20, ge=1, le=200),
 ):
     result = work_service.list(
         db,

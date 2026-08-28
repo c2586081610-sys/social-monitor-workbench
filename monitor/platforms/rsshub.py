@@ -102,6 +102,11 @@ class RSSHubRouterAdapter:
             content_type, image_urls = RSSHubRouterAdapter._parse_twitter_media(entry)
             item["content_type"] = content_type
             item["media_urls"] = image_urls
+            item["cover_url"] = image_urls[0] if image_urls else None
+        else:
+            # 其他平台（bilibili 等）：RSS 条目 image 字段作封面
+            item["cover_url"] = entry.get("image") or None
+            item["content_type"] = "video"
         return item
 
     @staticmethod

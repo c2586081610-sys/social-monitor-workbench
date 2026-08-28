@@ -51,6 +51,8 @@ class Settings:
         self.obsidian_root: Path = _env_path("OBSIDIAN_ROOT", ws / "Obsidian")
         self.workbuddy_dir: Path = _env_path("WORKBUDDY_DIR", ws / "workbuddy")
         self.pending_dir: Path = self.workbuddy_dir / "pending"
+        # 后端对外可访问的 base URL（前端在不同源时用绝对 URL 拼接 /media/...；同源开发环境留空走相对路径）
+        self.media_base_url: str = os.getenv("MEDIA_BASE_URL", "").rstrip("/")
         self.trigger_dir: Path = self.workbuddy_dir / "triggers"
         self.monitor_heartbeat_file: Path = self.workbuddy_dir / "monitor_heartbeat.json"
         self.monitor_heartbeat_timeout: int = int(os.getenv("MONITOR_HEARTBEAT_TIMEOUT", "60"))

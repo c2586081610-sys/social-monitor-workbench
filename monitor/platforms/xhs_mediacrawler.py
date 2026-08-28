@@ -94,6 +94,7 @@ class XhsMediacrawlerAdapter:
                     "url": url,
                     "published_at": published_at,
                     "content_type": "image" if not n.get("has_video") else "video",
+                    "cover_url": n.get("cover") or None,
                 }
             )
         return items

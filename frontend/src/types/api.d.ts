@@ -93,6 +93,8 @@ export interface Work {
   task_id: string | null;
   media_path: string | null;
   note_path: string | null;
+  content_type: string;
+  cover_url: string | null;
   frame_count: number;
   retry_count: number;
   last_error: string | null;
