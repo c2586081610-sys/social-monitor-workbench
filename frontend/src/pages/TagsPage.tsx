@@ -44,50 +44,56 @@ export default function TagsPage() {
       </div>
 
       <section className="rounded-lg border border-line bg-surface p-4 shadow-card">
-        <h2 className="mb-3 text-xs font-semibold uppercase tracking-widest text-ink-muted">大标签</h2>
         {tagsQuery.loading ? (
           <LoadingState label="加载标签…" />
-        ) : bigTags.length === 0 ? (
-          <p className="text-xs text-ink-muted">暂无大标签。</p>
+        ) : tags.length === 0 ? (
+          <p className="text-xs text-ink-muted">暂无标签，AI 笔记生成后将自动聚合。</p>
         ) : (
-          <div className="flex flex-wrap gap-2">
-            {bigTags.map((t) => (
-              <button
-                key={t.id}
-                type="button"
-                onClick={() => selectTag(t.name)}
-                className={`rounded-full px-3 py-1.5 text-sm font-semibold transition-colors ${
-                  selected === t.name
-                    ? 'bg-primary text-white'
-                    : 'bg-primary-light text-primary hover:bg-primary hover:text-white'
-                }`}
-              >
-                #{t.name}（{t.work_count}）
-              </button>
-            ))}
-          </div>
-        )}
+          <>
+            {bigTags.length > 0 ? (
+              <div>
+                <h2 className="mb-3 text-xs font-semibold uppercase tracking-widest text-ink-muted">大标签</h2>
+                <div className="flex flex-wrap gap-2">
+                  {bigTags.map((t) => (
+                    <button
+                      key={t.id}
+                      type="button"
+                      onClick={() => selectTag(t.name)}
+                      className={`rounded-full px-3 py-1.5 text-sm font-semibold transition-colors ${
+                        selected === t.name
+                          ? 'bg-primary text-white'
+                          : 'bg-primary-light text-primary hover:bg-primary hover:text-white'
+                      }`}
+                    >
+                      #{t.name}（{t.work_count}）
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : null}
 
-        <h2 className="mb-3 mt-5 text-xs font-semibold uppercase tracking-widest text-ink-muted">小标签</h2>
-        {smallTags.length === 0 ? (
-          <p className="text-xs text-ink-muted">暂无小标签。</p>
-        ) : (
-          <div className="flex flex-wrap gap-2">
-            {smallTags.map((t) => (
-              <button
-                key={t.id}
-                type="button"
-                onClick={() => selectTag(t.name)}
-                className={`rounded-full px-2.5 py-1 text-xs transition-colors ${
-                  selected === t.name
-                    ? 'bg-primary text-white'
-                    : 'border border-line bg-surface text-ink-secondary hover:bg-sidebar'
-                }`}
-              >
-                #{t.name}（{t.work_count}）
-              </button>
-            ))}
-          </div>
+            {smallTags.length > 0 ? (
+              <div className={bigTags.length > 0 ? 'mt-5' : ''}>
+                <h2 className="mb-3 text-xs font-semibold uppercase tracking-widest text-ink-muted">小标签</h2>
+                <div className="flex flex-wrap gap-2">
+                  {smallTags.map((t) => (
+                    <button
+                      key={t.id}
+                      type="button"
+                      onClick={() => selectTag(t.name)}
+                      className={`rounded-full px-2.5 py-1 text-xs transition-colors ${
+                        selected === t.name
+                          ? 'bg-primary text-white'
+                          : 'border border-line bg-surface text-ink-secondary hover:bg-sidebar'
+                      }`}
+                    >
+                      #{t.name}（{t.work_count}）
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+          </>
         )}
       </section>
 

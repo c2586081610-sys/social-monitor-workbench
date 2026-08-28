@@ -83,7 +83,7 @@ export default function WorkDetailPage() {
             <div className="flex flex-wrap items-center gap-2">
               <h1 className="text-base font-semibold text-ink">{work.title}</h1>
               <PlatformBadge platform={work.platform} />
-              <StatusBadge status={work.status} />
+              <StatusBadge status={work.status} notePath={work.note_path} />
             </div>
             <p className="mt-1 text-xs text-ink-muted">
               发布于 {formatDateTime(work.published_at)} · 重试 {work.retry_count} 次
@@ -188,7 +188,7 @@ export default function WorkDetailPage() {
         ) : (
           <p className="text-xs text-ink-muted">
             {work.status === 'NOTE_GENERATING'
-              ? '待 AI 生成：WorkBuddy 正在读取素材就绪清单，完成后笔记将出现在 Obsidian。'
+              ? 'AI 笔记未完成：素材就绪清单已生成，等待 WorkBuddy 处理（可点击「手动生成 AI 笔记」触发）。'
               : '尚未生成：完成下载/转写后可通过「手动生成 AI 笔记」触发。'}
           </p>
         )}

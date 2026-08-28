@@ -105,6 +105,8 @@ export interface WorkSummary {
   title: string;
   status: WorkStatus;
   published_at: string | null;
+  /** 笔记已完成标记：note_path 存在 = 笔记已生成（后端 recent_works 当前未返回该字段，预留可选）。 */
+  note_path?: string | null;
 }
 
 export interface TaskStage {
@@ -284,6 +286,10 @@ export interface PollStatusItem {
   platform: Platform;
   last_poll_at: string | null;
   status: string;
+  /** 本次爬取检测到的新作品数（status=ok 时有意义）。 */
+  new_works: number;
+  /** 失败原因（如 no_rsshub_route / CDP 未启用 / route 失效），成功时为 null。 */
+  detail: string | null;
 }
 
 export interface PollStatusList {

@@ -3,6 +3,7 @@ import {
   AlertTriangle,
   CheckCircle2,
   Clock,
+  FileText,
   Inbox,
   Loader2,
   XCircle,
@@ -33,7 +34,8 @@ const WORK_META: Record<WorkStatus, WorkBadgeMeta> = {
   DOWNLOADING: { tone: 'info', icon: Loader2, spin: true },
   TRANSCRIBING: { tone: 'info', icon: Loader2, spin: true },
   FRAME_EXTRACTING: { tone: 'info', icon: Loader2, spin: true },
-  NOTE_GENERATING: { tone: 'info', icon: Loader2, spin: true },
+  // NOTE_GENERATING：当前系统无真正生成中的信号，一律不转圈；「已完成」分支见 StatusBadge 的 notePath 判断
+  NOTE_GENERATING: { tone: 'neutral', icon: FileText },
   DONE: { tone: 'success', icon: CheckCircle2 },
   FAILED: { tone: 'danger', icon: XCircle },
   UNCLASSIFIED: { tone: 'warning', icon: Inbox },
@@ -55,8 +57,11 @@ function BadgeInner({ icon: Icon, spin, label, tone }: { icon: LucideIcon; spin?
   );
 }
 
-/** 作品状态徽标。 */
-export function StatusBadge({ status }: { status: WorkStatus }) {
+/** 作品状态徽标。notePath 非空时 NOTE_GENERATING 视为已完成（二分显示）。 */
+export function StatusBadge({ status, notePath }: { status: WorkStatus; notePath?: string | null }) {
+  if (status === 'NOTE_GENERATING' && notePath) {
+    return <BadgeInner icon={CheckCircle2} label="已完成" tone="success" />;
+  }
   const meta = WORK_META[status] ?? WORK_META.NEW;
   return <BadgeInner icon={meta.icon} spin={meta.spin} label={STATUS_LABEL[status] ?? status} tone={meta.tone} />;
 }

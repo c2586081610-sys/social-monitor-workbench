@@ -18,6 +18,15 @@ interface CreatorCardProps {
   onChanged: () => void;
 }
 
+/** 最近作品状态二分：有笔记=已完成（绿）；NOTE_GENERATING 无笔记=AI 笔记未完成（灰，不转圈）；其余按状态色。 */
+function recentWorkMeta(w: WorkSummary): { label: string; className: string } {
+  if (w.note_path) return { label: '已完成', className: 'bg-success-light text-success' };
+  if (w.status === 'NOTE_GENERATING') return { label: 'AI 笔记未完成', className: 'bg-sidebar text-ink-muted' };
+  if (w.status === 'DONE') return { label: '已完成', className: 'bg-success-light text-success' };
+  if (w.status === 'FAILED') return { label: '失败', className: 'bg-danger-light text-danger' };
+  return { label: STATUS_LABEL[w.status] ?? w.status, className: 'bg-info-light text-info' };
+}
+
 export default function CreatorCard({ creator, groupName, recentWorks = [], onChanged }: CreatorCardProps) {
   const [confirmOpen, setConfirmOpen] = useState(false);
   const toggleMutation = useMutation((enabled: boolean) =>
@@ -109,21 +118,16 @@ export default function CreatorCard({ creator, groupName, recentWorks = [], onCh
         {recentWorks.length === 0 ? (
           <p className="text-xs text-ink-muted">暂无作品记录</p>
         ) : (
-          recentWorks.slice(0, 3).map((w) => (
-            <Link key={w.id} to={`/works/${w.id}`} className="flex items-center gap-2 rounded-md px-1 py-0.5 transition-colors hover:bg-sidebar">
-              <span className="h-8 w-12 shrink-0 rounded bg-sidebar" aria-hidden="true" />
-              <span className="truncate-1 min-w-0 flex-1 text-xs text-ink-secondary">{w.title}</span>
-              <span className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium ${
-                w.status === 'DONE'
-                  ? 'bg-success-light text-success'
-                  : w.status === 'FAILED'
-                    ? 'bg-danger-light text-danger'
-                    : 'bg-info-light text-info'
-              }`}>
-                {STATUS_LABEL[w.status] ?? w.status}
-              </span>
-            </Link>
-          ))
+          recentWorks.slice(0, 3).map((w) => {
+            const meta = recentWorkMeta(w);
+            return (
+              <Link key={w.id} to={`/works/${w.id}`} className="flex items-center gap-2 rounded-md px-1 py-0.5 transition-colors hover:bg-sidebar">
+                <span className="h-8 w-12 shrink-0 rounded bg-sidebar" aria-hidden="true" />
+                <span className="truncate-1 min-w-0 flex-1 text-xs text-ink-secondary">{w.title}</span>
+                <span className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium ${meta.className}`}>{meta.label}</span>
+              </Link>
+            );
+          })
         )}
       </div>
 

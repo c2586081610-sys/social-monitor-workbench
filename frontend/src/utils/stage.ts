@@ -99,7 +99,8 @@ export function stageProgress(status: WorkStatus, stages?: TaskStage[]): StagePr
       overallFailed,
       stageMap,
       doneThreshold: 5,
-      activeStatuses: ['NOTE_GENERATING'],
+      // 当前系统没有真正「生成中」的信号（AI 笔记为手动/外部触发），NOTE_GENERATING 视为未完成而非进行中，避免误导性转圈
+      activeStatuses: [],
     }),
   ];
 

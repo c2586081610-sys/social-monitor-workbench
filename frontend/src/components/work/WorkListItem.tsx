@@ -47,7 +47,7 @@ export default function WorkListItem({ work, onChanged }: WorkListItemProps) {
             {work.title}
           </Link>
           <PlatformBadge platform={work.platform} />
-          <StatusBadge status={work.status} />
+          <StatusBadge status={work.status} notePath={work.note_path} />
         </div>
 
         <p className="mt-1 text-xs text-ink-muted">

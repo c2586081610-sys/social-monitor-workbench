@@ -1,6 +1,6 @@
-/** 平台监控行：每平台 = 启用开关（localStorage）+ 立即爬取（poll-now {platform}）+ 上次爬取时间（poll-status）。 */
+/** 平台监控（一行 chips）：每平台 = 平台名（短）+ 启用开关 + 上次爬取相对时间 + 立即爬取图标按钮。 */
 import { useMemo, useState } from 'react';
-import { RefreshCw } from 'lucide-react';
+import { CheckCircle2, RefreshCw } from 'lucide-react';
 import Toggle from '../common/Toggle';
 import PlatformBadge from '../common/PlatformBadge';
 import { pollNow, pollStatus } from '../../services/monitor';
@@ -56,42 +56,42 @@ export default function PlatformPollPanel() {
 
   return (
     <section className="rounded-lg border border-line bg-surface p-3">
-      <div className="mb-1 flex items-baseline justify-between">
-        <h2 className="text-xs font-semibold uppercase tracking-widest text-ink-muted">平台监控</h2>
-        <span className="text-xs text-ink-muted">关闭开关可停用该平台的单次爬取</span>
-      </div>
-      <div className="divide-y divide-line">
+      <div className="flex flex-wrap items-center gap-2">
+        <h2 className="mr-1 text-xs font-semibold uppercase tracking-widest text-ink-muted">平台监控</h2>
         {PLATFORMS.map((p) => {
           const enabled = enabledMap[p.value] ?? true;
           const item = statusByPlatform[p.value];
           const pending = Boolean(pendingMap[p.value]);
           const triggered = Boolean(triggeredMap[p.value]);
           return (
-            <div key={p.value} className="flex flex-wrap items-center justify-between gap-3 py-2.5">
-              <div className="flex items-center gap-2.5">
-                <PlatformBadge platform={p.value} />
-                <Toggle
-                  size="sm"
-                  checked={enabled}
-                  onChange={(v) => handleToggle(p.value, v)}
-                  label={`${enabled ? '停用' : '启用'}${p.label}监控`}
-                />
-              </div>
-              <div className="flex items-center gap-3">
-                <span className="text-xs text-ink-muted">
-                  上次爬取 <span className="font-mono text-ink-secondary">{formatRelativeTime(item?.last_poll_at)}</span>
-                </span>
-                <button
-                  type="button"
-                  onClick={() => handleTrigger(p.value as Platform)}
-                  disabled={!enabled || pending}
-                  className="inline-flex items-center gap-1 rounded-md border border-line bg-surface px-2 py-1 text-xs text-ink-secondary transition-colors hover:border-primary/40 hover:text-primary disabled:cursor-not-allowed disabled:opacity-50"
-                  title={enabled ? `立即爬取${p.label}` : '已停用，请先开启'}
-                >
+            <div
+              key={p.value}
+              className="inline-flex items-center gap-2 rounded-md border border-line bg-surface px-2 py-1"
+              title={`${p.label} · 上次爬取 ${item?.last_poll_at ? formatRelativeTime(item.last_poll_at) : '尚未爬取'}`}
+            >
+              <PlatformBadge platform={p.value} />
+              <Toggle
+                size="sm"
+                checked={enabled}
+                onChange={(v) => handleToggle(p.value, v)}
+                label={`${enabled ? '停用' : '启用'}${p.label}监控`}
+              />
+              <span className="min-w-0 text-[11px] leading-none text-ink-muted">
+                {item?.last_poll_at ? formatRelativeTime(item.last_poll_at) : '未爬取'}
+              </span>
+              <button
+                type="button"
+                onClick={() => handleTrigger(p.value as Platform)}
+                disabled={!enabled || pending}
+                className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-ink-secondary transition-colors hover:bg-sidebar hover:text-primary disabled:cursor-not-allowed disabled:opacity-40"
+                title={enabled ? `立即爬取${p.label}` : '已停用，请先开启'}
+              >
+                {triggered ? (
+                  <CheckCircle2 className="h-3.5 w-3.5 text-success" />
+                ) : (
                   <RefreshCw className={`h-3.5 w-3.5 ${pending ? 'animate-spin' : ''}`} />
-                  {triggered ? '已触发' : '立即爬取'}
-                </button>
-              </div>
+                )}
+              </button>
             </div>
           );
         })}

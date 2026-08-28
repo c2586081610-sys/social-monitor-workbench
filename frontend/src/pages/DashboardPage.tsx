@@ -6,13 +6,15 @@ import AddCreatorModal from '../components/creator/AddCreatorModal';
 import Toggle from '../components/common/Toggle';
 import EngineHealthPanel from '../components/dashboard/EngineHealthPanel';
 import PlatformPollPanel from '../components/dashboard/PlatformPollPanel';
+import PollSummaryBar from '../components/dashboard/PollSummaryBar';
 import { EmptyState, ErrorState, LoadingState } from '../components/common/StateViews';
 import { listCreators, getCreator } from '../services/creators';
 import { listGroups } from '../services/groups';
-import { pollNow } from '../services/monitor';
-import { useAsyncData } from '../hooks/useApi';
+import { pollNow, pollStatus } from '../services/monitor';
+import { useAsyncData, usePolling } from '../hooks/useApi';
 import { readAggSettings, setGlobalEnabled } from '../utils/aggSettings';
-import type { WorkSummary } from '../types/api.d';
+import { parseDate } from '../utils/format';
+import type { Creator, WorkSummary } from '../types/api.d';
 
 export default function DashboardPage() {
   const [groupFilter, setGroupFilter] = useState<'all' | number>('all');
@@ -31,6 +33,10 @@ export default function DashboardPage() {
       }),
     [groupFilter],
   );
+
+  // 爬取摘要：按平台最近一次爬取结果，每 30s 刷新；点「立即爬取」后同步刷新
+  const pollStatusQuery = useAsyncData(() => pollStatus(), []);
+  usePolling(pollStatusQuery.refetch, true, 30000);
 
   // 最近作品摘要（详情接口返回 ≤5 条），仅对当前页博主拉取
   const [recentMap, setRecentMap] = useState<Record<number, WorkSummary[]>>({});
@@ -73,8 +79,10 @@ export default function DashboardPage() {
       await pollNow();
       setPollMsg('爬取已触发，正在拉取最新作品…');
       creatorsQuery.refetch();
+      pollStatusQuery.refetch();
     } catch (e) {
       setPollMsg(e instanceof Error ? `爬取失败：${e.message}` : '爬取失败');
+      pollStatusQuery.refetch();
     } finally {
       setPollingAll(false);
     }
@@ -95,6 +103,19 @@ export default function DashboardPage() {
   }, [agg.globalEnabled, agg.autoRefresh, agg.autoRefreshMinutes]);
 
   const creators = creatorsQuery.data?.items ?? [];
+
+  // 博主卡片按最近作品时间从新到旧排序（优先 last_work_at，其次最近作品 published_at，兜底 created_at）
+  const sortedCreators = useMemo(() => {
+    const latestTime = (c: Creator): number => {
+      const lastWork = parseDate(c.last_work_at)?.getTime();
+      if (lastWork) return lastWork;
+      const recent = recentMap[c.id]?.[0];
+      const recentAt = recent ? parseDate(recent.published_at)?.getTime() : undefined;
+      if (recentAt) return recentAt;
+      return parseDate(c.created_at)?.getTime() ?? 0;
+    };
+    return [...creators].sort((a, b) => latestTime(b) - latestTime(a));
+  }, [creators, recentMap]);
 
   return (
     <div className="space-y-4">
@@ -137,7 +158,14 @@ export default function DashboardPage() {
       {/* 引擎在线状态（按流水线角色分组） */}
       <EngineHealthPanel />
 
-      {/* 平台监控（启用开关 + 立即爬取 + 上次爬取时间） */}
+      {/* 爬取摘要（各平台最近一次爬取结果徽标） */}
+      <PollSummaryBar
+        items={pollStatusQuery.data?.items ?? []}
+        error={pollStatusQuery.error}
+        onRetry={pollStatusQuery.refetch}
+      />
+
+      {/* 平台监控（启用开关 + 立即爬取 + 上次爬取时间，一行 chips） */}
       <PlatformPollPanel />
 
       {/* 分组过滤 */}
@@ -187,7 +215,7 @@ export default function DashboardPage() {
         />
       ) : (
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {creators.map((c) => (
+          {sortedCreators.map((c) => (
             <CreatorCard
               key={c.id}
               creator={c}
