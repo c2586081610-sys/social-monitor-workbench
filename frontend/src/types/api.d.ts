@@ -192,6 +192,10 @@ export interface LinkAnalysisResult {
   mode: LinkAnalysisMode;
 }
 
+export interface NoteCompletionRequest {
+  note_path: string;
+}
+
 export interface FrameHit {
   term: string;
   action: 'increase' | 'decrease';

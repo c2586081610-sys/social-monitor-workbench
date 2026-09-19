@@ -23,3 +23,7 @@ class LinkAnalysisResult(BaseModel):
     work: Work
     created: bool
     mode: LinkAnalysisMode
+
+
+class NoteCompletionRequest(BaseModel):
+    note_path: str = Field(min_length=1, max_length=500)

@@ -6,7 +6,9 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, require_admin
 from app.core.errors import ok
+from app.schemas.link_analysis import NoteCompletionRequest
 from app.schemas.work import ClassifyRequest
+from app.services.link_analysis_service import link_analysis_service
 from app.services.classify_service import classify_service
 from app.services.note_service import note_service
 from app.services.work_service import work_service
@@ -65,6 +67,11 @@ def retry_work(work_id: int, db: Session = Depends(get_db)):
 @router.post("/{work_id}/analyze", status_code=200)
 def analyze_work(work_id: int, db: Session = Depends(get_db)):
     return ok(note_service.analyze(db, work_id))
+
+
+@router.post("/{work_id}/complete-note", status_code=200)
+def complete_note(work_id: int, payload: NoteCompletionRequest, db: Session = Depends(get_db)):
+    return ok(link_analysis_service.complete_note(db, work_id, payload.note_path).model_dump())
 
 
 @router.post("/{work_id}/classify", status_code=200)

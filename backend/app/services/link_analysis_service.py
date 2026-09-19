@@ -3,13 +3,15 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Callable, Literal
 from urllib.parse import urlsplit
 
 import httpx
 from sqlalchemy.orm import Session
 
-from app.core.errors import validation
+from app.core.config import settings
+from app.core.errors import not_found, validation
 from app.repositories import task_repo, work_repo
 from app.schemas.link_analysis import LinkAnalysisCreate, LinkAnalysisResult
 from app.schemas.work import Work as WorkSchema
@@ -99,6 +101,34 @@ class LinkAnalysisService:
             created=True,
             mode=request.mode,
         )
+
+    def complete_note(self, db: Session, work_id: int, note_path: str) -> WorkSchema:
+        relative = Path(note_path.replace("\\", "/"))
+        if relative.is_absolute() or relative.drive:
+            raise validation("NOTE_PATH_INVALID")
+        root = settings.obsidian_root.resolve()
+        candidate = (root / relative).resolve()
+        try:
+            candidate.relative_to(root)
+        except ValueError:
+            raise validation("NOTE_PATH_INVALID") from None
+        if candidate.suffix.lower() != ".md" or not candidate.is_file():
+            raise validation("NOTE_PATH_INVALID")
+
+        work = work_repo.get(db, work_id)
+        if work is None:
+            raise not_found("WORK_NOT_FOUND")
+        work_repo.update(
+            db,
+            work,
+            note_path=candidate.relative_to(root).as_posix(),
+            status="DONE",
+        )
+        task = task_repo.upsert(db, work.id, "note", "succeeded", attempts=1)
+        task.error = None
+        db.commit()
+        db.refresh(work)
+        return WorkSchema.model_validate(work)
 
 
 link_analysis_service = LinkAnalysisService()

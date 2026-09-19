@@ -3,7 +3,9 @@ from __future__ import annotations
 
 import pytest
 
+from app.core.config import settings
 from app.core.errors import AppError
+from app.repositories import work_repo
 from app.services.link_analysis_service import parse_link_identity
 
 
@@ -87,3 +89,51 @@ def test_short_link_redirect_to_unsupported_host_is_rejected():
             "https://b23.tv/short-code",
             resolve_redirect=lambda _url: "https://example.com/video/anything",
         )
+
+
+def test_complete_note_accepts_existing_relative_markdown_and_marks_work_done(client, auth_headers, db):
+    work = work_repo.upsert(
+        db,
+        "bilibili",
+        "BV-note-complete",
+        title="笔记完成测试",
+        url="https://www.bilibili.com/video/BV-note-complete",
+        source_type="manual",
+        status="NOTE_GENERATING",
+    )
+    db.commit()
+    note = settings.obsidian_root / "未分组" / "笔记完成测试.md"
+    note.parent.mkdir(parents=True, exist_ok=True)
+    note.write_text("# 笔记完成测试", encoding="utf-8")
+
+    response = client.post(
+        f"/api/v1/works/{work.id}/complete-note",
+        json={"note_path": "未分组/笔记完成测试.md"},
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+    assert response.json()["data"]["status"] == "DONE"
+    assert response.json()["data"]["note_path"] == "未分组/笔记完成测试.md"
+
+
+@pytest.mark.parametrize("note_path", ["../outside.md", "C:/outside.md", "未分组/missing.md", "未分组/not-note.txt"])
+def test_complete_note_rejects_unsafe_or_missing_file(client, auth_headers, db, note_path):
+    work = work_repo.upsert(
+        db,
+        "bilibili",
+        f"BV-note-invalid-{note_path}",
+        title="笔记路径测试",
+        url="https://www.bilibili.com/video/BV1xx411c7mD",
+        source_type="manual",
+        status="NOTE_GENERATING",
+    )
+    db.commit()
+
+    response = client.post(
+        f"/api/v1/works/{work.id}/complete-note",
+        json={"note_path": note_path},
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 422

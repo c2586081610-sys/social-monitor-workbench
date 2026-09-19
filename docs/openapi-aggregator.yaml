@@ -324,6 +324,33 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /api/v1/works/{work_id}/complete-note:
+    parameters:
+      - { $ref: '#/components/parameters/WorkId' }
+    post:
+      tags: [works]
+      summary: 回填已由 Codex 写入的本地 Obsidian 笔记
+      operationId: completeNote
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/NoteCompletionRequest' }
+      responses:
+        '200':
+          description: 笔记路径已验证，作品已完成
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: '#/components/schemas/Envelope' }
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/Work' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
   /api/v1/works/{work_id}/classify:
     parameters:
       - { $ref: '#/components/parameters/WorkId' }
@@ -837,6 +864,12 @@ components:
         mode:
           type: string
           enum: [one_time, monitor]
+
+    NoteCompletionRequest:
+      type: object
+      required: [note_path]
+      properties:
+        note_path: { type: string, minLength: 1, maxLength: 500 }
 
     TagKind:
       type: string
