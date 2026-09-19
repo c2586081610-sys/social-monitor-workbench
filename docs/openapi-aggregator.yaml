@@ -18,6 +18,8 @@ tags:
     description: 博主管理（四平台添加/删除/归组/启停）
   - name: works
     description: 作品与三件套状态、重试、手动分析、归类
+  - name: link-analyses
+    description: 用户提交单条视频链接后的手动入库
   - name: groups
     description: 博主分组（手动，一博主一组）
   - name: tags
@@ -174,6 +176,31 @@ paths:
                       data: { $ref: '#/components/schemas/WorkPage' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
+
+  # ==================== link analyses ====================
+  /api/v1/link-analyses:
+    post:
+      tags: [link-analyses]
+      summary: 创建或复用一条手动视频链接分析
+      operationId: createLinkAnalysis
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LinkAnalysisCreate' }
+      responses:
+        '201':
+          description: 手动作品已创建或已复用
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: '#/components/schemas/Envelope' }
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/LinkAnalysisResult' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '422': { $ref: '#/components/responses/ValidationError' }
 
   # ==================== works ====================
   /api/v1/works:
@@ -786,6 +813,30 @@ components:
     SourceType:
       type: string
       enum: [monitor, like, favorite, manual]
+
+    LinkAnalysisCreate:
+      type: object
+      required: [url, platform, external_id]
+      properties:
+        url: { type: string, format: uri, maxLength: 2000 }
+        platform:
+          type: string
+          enum: [douyin, bilibili, xhs, twitter]
+        external_id: { type: string, minLength: 1, maxLength: 200 }
+        mode:
+          type: string
+          enum: [one_time, monitor]
+          default: one_time
+
+    LinkAnalysisResult:
+      type: object
+      required: [work, created, mode]
+      properties:
+        work: { $ref: '#/components/schemas/Work' }
+        created: { type: boolean }
+        mode:
+          type: string
+          enum: [one_time, monitor]
 
     TagKind:
       type: string

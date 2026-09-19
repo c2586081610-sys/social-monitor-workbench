@@ -177,6 +177,21 @@ export interface AnalyzeResult {
   pending_file?: string;
 }
 
+export type LinkAnalysisMode = 'one_time' | 'monitor';
+
+export interface LinkAnalysisCreate {
+  url: string;
+  platform: Exclude<Platform, 'wechat'>;
+  external_id: string;
+  mode?: LinkAnalysisMode;
+}
+
+export interface LinkAnalysisResult {
+  work: Work;
+  created: boolean;
+  mode: LinkAnalysisMode;
+}
+
 export interface FrameHit {
   term: string;
   action: 'increase' | 'decrease';
