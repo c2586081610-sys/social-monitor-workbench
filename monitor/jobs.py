@@ -274,6 +274,36 @@ def _work_media_dir(work) -> Path:
     return settings.media_root / rel
 
 
+def process_link_analysis(work_id: int) -> dict[str, str | int]:
+    """只处理用户刚提交的一条视频作品，不依赖也不触发全局队列。"""
+    with SessionLocal() as db:
+        work = db.get(Work, work_id)
+        if work is None or work.status not in {"NEW", "QUEUED", "FAILED"}:
+            raise ValueError(f"work {work_id} is not runnable")
+        if (work.content_type or "video") != "video":
+            work.status = "FAILED"
+            work.last_error = "链接分析仅支持视频作品"
+            task_repo.mark_failed(db, work.id, "download", work.last_error)
+            db.commit()
+            return {"work_id": work.id, "status": work.status}
+        try:
+            _process_work(db, work, write_pending=False)
+            db.commit()
+        except PipelineOfflineError as exc:
+            work.status = "FAILED"
+            work.last_error = str(exc)
+            task_repo.mark_failed(db, work.id, "download", str(exc))
+            db.commit()
+            logger.warning("link analysis %s pipeline offline: %s", work.id, exc)
+        except Exception as exc:  # noqa: BLE001
+            work.status = "FAILED"
+            work.last_error = str(exc)
+            task_repo.mark_failed(db, work.id, "download", str(exc))
+            db.commit()
+            logger.exception("link analysis %s pipeline failed", work.id)
+        return {"work_id": work.id, "status": work.status}
+
+
 def run_pipeline() -> None:
     """处理 NEW/QUEUED 作品：下载→转写→抽帧→素材就绪清单；失败落 FAILED 可重试（AC-8）。"""
     if not settings.monitor_run_pipeline:
@@ -284,7 +314,7 @@ def run_pipeline() -> None:
         ).scalars().all()
         for work in works:
             try:
-                _process_work(db, work)
+                _process_work(db, work, write_pending=True)
                 db.commit()
             except PipelineOfflineError as exc:
                 work.status = "FAILED"
@@ -300,7 +330,7 @@ def run_pipeline() -> None:
                 logger.exception("work %s 流水线异常", work.id)
 
 
-def _process_work(db: Session, work) -> None:
+def _process_work(db: Session, work, *, write_pending: bool = True) -> None:
     """单作品流水线。v0.4：按 content_type 分流——
     video 走原五步（下载→转写→抽帧→就绪）；image/text（推特图文）走
     下载图片→写 manifest→跳过转写/抽帧→直接进 AI 笔记。
@@ -308,21 +338,27 @@ def _process_work(db: Session, work) -> None:
     media_dir = _work_media_dir(work)
     content_type = work.content_type or "video"
     if content_type != "video":
-        _process_image_work(db, work, media_dir)
+        _process_image_work(db, work, media_dir, write_pending=write_pending)
         return
 
-    video_path = download.download(work.platform, work.url, media_dir)
     work.status = "DOWNLOADING"
+    download_task = task_repo.upsert(db, work.id, "download", "running", attempts=1)
+    download_task.error = None
+    video_path = download.download(work.platform, work.url, media_dir)
     work.media_path = str(media_dir.relative_to(settings.media_root)).replace("\\", "/")
     task_repo.upsert(db, work.id, "download", "succeeded", attempts=1)
 
     work.status = "TRANSCRIBING"
+    transcribe_task = task_repo.upsert(db, work.id, "transcribe", "running", attempts=1)
+    transcribe_task.error = None
     transcript_dir = media_dir / "transcript"
     transcript_path = transcribe.transcribe(video_path, transcript_dir)
     work.transcript_path = str(Path(transcript_path).relative_to(settings.media_root)).replace("\\", "/")
     task_repo.upsert(db, work.id, "transcribe", "succeeded", attempts=1)
 
     work.status = "FRAME_EXTRACTING"
+    frame_task = task_repo.upsert(db, work.id, "frames", "running", attempts=1)
+    frame_task.error = None
     frames_dir = media_dir / "frames"
     entries = [
         {"term": e.term, "action": e.action, "weight": e.weight, "enabled": bool(e.enabled)}
@@ -337,10 +373,14 @@ def _process_work(db: Session, work) -> None:
     task_repo.upsert(db, work.id, "frames", "succeeded", attempts=1)
 
     work.status = "NOTE_GENERATING"
-    notify.notify_ready(db, work)
+    if write_pending:
+        notify.notify_ready(db, work)
+    else:
+        note_task = task_repo.upsert(db, work.id, "note", "pending", attempts=0)
+        note_task.error = None
 
 
-def _process_image_work(db: Session, work, media_dir: Path) -> None:
+def _process_image_work(db: Session, work, media_dir: Path, *, write_pending: bool = True) -> None:
     """图文作品：curl_cffi 下载图片清单 → 写 manifest → 直接进入 AI 笔记阶段。"""
     from monitor.pipeline import twitter_image
 
@@ -359,7 +399,11 @@ def _process_image_work(db: Session, work, media_dir: Path) -> None:
     task_repo.upsert(db, work.id, "download", "succeeded", attempts=1)
 
     work.status = "NOTE_GENERATING"
-    notify.notify_ready(db, work)
+    if write_pending:
+        notify.notify_ready(db, work)
+    else:
+        note_task = task_repo.upsert(db, work.id, "note", "pending", attempts=0)
+        note_task.error = None
 
 
 def _load_segments(transcript_rel: str | None) -> list[dict]:
