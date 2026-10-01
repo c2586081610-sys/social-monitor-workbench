@@ -31,7 +31,7 @@ ARCHIVE_PLATFORM_LABELS: dict[str, str] = {
     "douyin": "抖音",
     "bilibili": "哔哩哔哩",
     "xhs": "小红书",
-    "twitter": "Twitter/X",
+    "twitter": "X",
     "wechat": "微信公众号",
 }
 ARCHIVE_DIRECTORY_TEMPLATE = "{published_at}_{platform}_{title}_{external_id}"
