@@ -1,221 +1,479 @@
-"""流水线·下载：按平台路由 CLI 下载器（最低可用画质，许可证进程隔离 K11/K12）。
+"""Platform download adapters with validated, backward-compatible receipts.
 
-平台路由（SPEC ADR-004 + 本项目下载层设计）：
-  douyin   -> jiji262/douyin-downloader（主路径，video_quality=480p，见 _ensure_jiji_config）
-  bilibili -> yutto（多清晰度，360p 最低）
-  xhs      -> XHS-Downloader（GPL 子进程）
-  twitter  -> yt-dlp（-f worst 最低画质）
-  任意平台 -> MediaCrawler 适配器（预留接口：全平台采集/下载兜底，含热评+子评论）
-
-实现注意（Windows）：
-  - 统一用 [sys.executable, "-m", <module>] 调 yutto/yt_dlp，XHS 用 [sys.executable, main.py]
-    —— subprocess 直接调 .cmd 包装会 WinError 2（CreateProcess 不解析 .cmd/.bat）。
-  - 平台 cookie 从 config/platform_cookies.json 读取（推特=Netscape cookies.txt 路径，小红书=cookie 串），
-    未配置时推特/小红书下载抛 PipelineOfflineError 提示补 cookie。
+``download()`` keeps the original ``-> str`` contract. Archive-aware callers
+should use ``download_with_result()`` and pass only media records already
+registered for that work. A directory scan alone never makes an old file a
+successful download receipt.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
 import re
+import shutil
+import stat
 import subprocess
 import sys
+from collections.abc import Iterable, Mapping
+from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
+
+from .download_result import DownloadResult, MediaFile
 
 logger = logging.getLogger("monitor.pipeline.download")
 
-# 平台 cookie 配置文件（config/platform_cookies.json），下载器按需读取
 _COOKIE_CONFIG = os.getenv("PLATFORM_COOKIES_FILE", "")
-
-
-def _load_platform_cookies() -> dict:
-    """读取 config/platform_cookies.json；缺失/损坏返回 {}（不阻断 B站等免登录平台）。"""
-    path = Path(_COOKIE_CONFIG) if _COOKIE_CONFIG else Path(__file__).resolve().parents[3] / "config" / "platform_cookies.json"
-    if not path.exists():
-        return {}
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-        return payload if isinstance(payload, dict) else {}
-    except (OSError, json.JSONDecodeError):
-        logger.warning("platform_cookies.json 解析失败: %s", path)
-        return {}
+_VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".flv", ".webm", ".m4v", ".avi", ".ts"}
+_AUDIO_EXTENSIONS = {".m4a", ".mp3", ".wav", ".flac", ".aac", ".ogg", ".opus"}
+_DERIVED_DIRS = {"frames", "images", "transcript", "transcripts", "notes", "transcription"}
+_REPARSE_POINT = 0x0400
 
 
 class PipelineOfflineError(Exception):
-    """流水线引擎不可用（错误码 1001，SPEC §4.1）。"""
+    """A downloader is unavailable, failed, or produced no verifiable new media."""
 
 
-def _find_video(media_dir: Path) -> str:
-    """在下载目录中查找视频文件（mp4/mov/mkv/flv/webm）。"""
-    for f in media_dir.iterdir():
-        if f.suffix.lower() in (".mp4", ".mov", ".mkv", ".flv", ".webm"):
-            return str(f)
-    raise PipelineOfflineError("下载完成但未找到视频文件")
+@dataclass(frozen=True)
+class _FileObservation:
+    size_bytes: int
+    mtime_ns: int
+    ctime_ns: int
+    inode: int
 
 
-# 抖音 jiji262 画质档位。实测：lowest 档无音轨（仅 HEVC 视频流）→ 转写失败；
-# 480p 含 AAC 128kbps 音轨，为最低可用档（端到端实测结论，替代 lowest）。
+def _project_root() -> Path:
+    # download.py is <project>/monitor/pipeline/download.py; parents[2] is
+    # the project root. Going one parent farther would leave the project root.
+    return Path(__file__).resolve().parents[2]
+
+
+def _python_executable() -> str:
+    """Use the configured helper interpreter when available, else this Python."""
+    configured = os.getenv("PYTHON_EXE", "").strip()
+    if configured:
+        candidate = Path(configured)
+        if candidate.is_file():
+            return str(candidate)
+        resolved = shutil.which(configured)
+        if resolved:
+            return resolved
+        logger.warning("PYTHON_EXE is unavailable; using the current interpreter")
+    return sys.executable
+
+
+def _load_platform_cookies() -> dict[str, Any]:
+    """Load optional platform cookies without logging paths or credential data."""
+    path = Path(_COOKIE_CONFIG).expanduser() if _COOKIE_CONFIG else _project_root() / "config" / "platform_cookies.json"
+    if not path.is_file():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        logger.warning("platform cookie configuration could not be read")
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _run_cli(platform: str, command: list[str], *, cwd: str | Path | None = None) -> None:
+    """Run a downloader silently; never echo URLs, cookies, auth paths, or argv."""
+    try:
+        completed = subprocess.run(
+            command,
+            cwd=str(cwd) if cwd is not None else None,
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except OSError:
+        raise PipelineOfflineError(f"{platform} downloader could not start") from None
+    if completed.returncode != 0:
+        raise PipelineOfflineError(f"{platform} downloader failed (exit code {completed.returncode})")
+
+
+def _is_reparse(info) -> bool:
+    attrs = getattr(info, "st_file_attributes", 0)
+    return stat.S_ISLNK(info.st_mode) or bool(attrs & _REPARSE_POINT)
+
+
+def _safe_file_under(media_dir: Path, path: Path) -> Path:
+    """Resolve an original file below media_dir without following links."""
+    base = media_dir.absolute()
+    candidate = path if path.is_absolute() else base / path
+    candidate = Path(os.path.abspath(candidate))
+    try:
+        relative = candidate.relative_to(base)
+    except ValueError as exc:
+        raise ValueError("media receipt path leaves its work directory") from exc
+    if not relative.parts or any(part in {"", ".", ".."} for part in relative.parts):
+        raise ValueError("media receipt path is not a file below its work directory")
+
+    current = base
+    try:
+        base_info = current.lstat()
+    except OSError as exc:
+        raise ValueError("media work directory cannot be inspected") from exc
+    if _is_reparse(base_info):
+        raise ValueError("media work directory cannot be a link")
+    for index, part in enumerate(relative.parts):
+        current = current / part
+        try:
+            info = current.lstat()
+        except OSError as exc:
+            raise ValueError("media receipt file is unavailable") from exc
+        if _is_reparse(info):
+            raise ValueError("media receipt cannot traverse links")
+        if index < len(relative.parts) - 1 and not stat.S_ISDIR(info.st_mode):
+            raise ValueError("media receipt path contains a non-directory component")
+        if index == len(relative.parts) - 1 and not stat.S_ISREG(info.st_mode):
+            raise ValueError("media receipt is not a regular file")
+    resolved = current.resolve(strict=True)
+    try:
+        resolved.relative_to(base.resolve(strict=True))
+    except ValueError as exc:
+        raise ValueError("media receipt path leaves its work directory") from exc
+    return resolved
+
+
+def _coerce_registered(item: Any) -> tuple[Path, int, str | None, str | None]:
+    """Read an explicit persisted file record; a bare path is not registration."""
+    if isinstance(item, MediaFile):
+        return item.path, item.size_bytes, item.media_type, item.sha256
+    if isinstance(item, Mapping):
+        raw_path = item.get("path", item.get("relative_path"))
+        size = item.get("size_bytes")
+        if raw_path is None or isinstance(size, bool) or not isinstance(size, int):
+            raise ValueError("registered media requires a path and validated size")
+        media_type = item.get("media_type")
+        digest = item.get("sha256")
+        if media_type is not None and not isinstance(media_type, str):
+            raise ValueError("registered media type must be a string")
+        if digest is not None and not isinstance(digest, str):
+            raise ValueError("registered media hash must be a string")
+        return Path(str(raw_path)), size, media_type, digest
+    raise ValueError("registered media must include its persisted file record")
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _media_type(path: Path) -> str | None:
+    suffix = path.suffix.lower()
+    if suffix in _VIDEO_EXTENSIONS:
+        return "video"
+    if suffix in _AUDIO_EXTENSIONS:
+        return "audio"
+    return None
+
+
+def _is_derived_registered_path(path: Path) -> bool:
+    return any(part.casefold() in _DERIVED_DIRS for part in path.parts[:-1])
+
+
+def _registered_media_files(
+    media_dir: Path,
+    registered_files: Iterable[Any],
+) -> tuple[tuple[MediaFile, ...], bool]:
+    """Return verified originals and whether every eligible registration was valid."""
+    valid: dict[Path, MediaFile] = {}
+    complete = True
+    for item in registered_files or ():
+        raw_path_value = item.path if isinstance(item, MediaFile) else (
+            item.get("path", item.get("relative_path")) if isinstance(item, Mapping) else None
+        )
+        if raw_path_value is None:
+            complete = False
+            continue
+        try:
+            path_hint = Path(raw_path_value)
+        except (TypeError, ValueError):
+            complete = False
+            continue
+        if _is_derived_registered_path(path_hint):
+            continue
+        if _media_type(path_hint) is None:
+            continue
+        try:
+            raw_path, expected_size, declared_type, expected_hash = _coerce_registered(item)
+        except (TypeError, ValueError):
+            complete = False
+            continue
+        inferred_type = _media_type(raw_path)
+        if inferred_type is None:
+            continue
+        if declared_type not in {None, inferred_type}:
+            complete = False
+            continue
+        try:
+            resolved = _safe_file_under(media_dir, raw_path)
+            info = resolved.stat()
+            if expected_size <= 0 or info.st_size <= 0 or info.st_size != expected_size:
+                complete = False
+                continue
+            digest = _sha256(resolved) if expected_hash else None
+            if expected_hash and digest.lower() != expected_hash.lower():
+                complete = False
+                continue
+            # Recheck the size after hashing to avoid accepting a concurrent edit.
+            if resolved.stat().st_size != info.st_size:
+                complete = False
+                continue
+        except (OSError, ValueError):
+            complete = False
+            continue
+        valid[resolved] = MediaFile(resolved, info.st_size, inferred_type, digest or expected_hash)
+    files = tuple(valid[path] for path in sorted(valid, key=lambda value: str(value).casefold()))
+    return files, complete
+
+
+def _observe(path: Path) -> _FileObservation | None:
+    try:
+        info = path.lstat()
+    except OSError:
+        return None
+    if _is_reparse(info) or not stat.S_ISREG(info.st_mode) or info.st_size <= 0:
+        return None
+    return _FileObservation(info.st_size, info.st_mtime_ns, info.st_ctime_ns, getattr(info, "st_ino", 0))
+
+
+def _original_media_paths(media_dir: Path) -> list[Path]:
+    """Find only original audio/video candidates, excluding known derived folders."""
+    found: list[Path] = []
+    try:
+        candidates = media_dir.rglob("*")
+        for path in candidates:
+            try:
+                relative = path.relative_to(media_dir)
+                if any(part.casefold() in _DERIVED_DIRS for part in relative.parts[:-1]):
+                    continue
+                if path.suffix.lower() not in _VIDEO_EXTENSIONS | _AUDIO_EXTENSIONS:
+                    continue
+                if _observe(path) is not None:
+                    _safe_file_under(media_dir, path)
+                    found.append(path.resolve(strict=True))
+            except (OSError, ValueError):
+                continue
+    except OSError:
+        return []
+    return sorted(set(found), key=lambda value: str(value).casefold())
+
+
+def _snapshot(media_dir: Path) -> dict[Path, _FileObservation]:
+    return {
+        path: observation
+        for path in _original_media_paths(media_dir)
+        if (observation := _observe(path)) is not None
+    }
+
+
+def _new_media_files(media_dir: Path, before: Mapping[Path, _FileObservation]) -> tuple[MediaFile, ...]:
+    new_files: list[MediaFile] = []
+    for path in _original_media_paths(media_dir):
+        after = _observe(path)
+        if after is None:
+            continue
+        previous = before.get(path)
+        if previous is not None and previous == after:
+            continue
+        try:
+            safe_path = _safe_file_under(media_dir, path)
+            before_hash_stat = safe_path.stat()
+            digest = _sha256(safe_path)
+            after_hash_stat = safe_path.stat()
+        except (OSError, ValueError):
+            continue
+        if (
+            before_hash_stat.st_size <= 0
+            or before_hash_stat.st_size != after_hash_stat.st_size
+            or before_hash_stat.st_mtime_ns != after_hash_stat.st_mtime_ns
+        ):
+            continue
+        new_files.append(MediaFile(safe_path, after_hash_stat.st_size, _media_type(safe_path), digest))
+    return tuple(new_files)
+
+
+def _completed_at() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+# 抖音 jiji262 画质档位。480p 是本项目实测的最低含音轨档。
 _JIJI_VIDEO_QUALITY = "480p"
-_JIJI_QUALITY_NOTE = (
-    "# 注意：lowest 档无音轨（实测仅 HEVC 视频流），480p 为最低可用档（含 AAC 音轨）\n"
-)
+_JIJI_QUALITY_NOTE = "# 480p 为本项目最低可转写档位\n"
 
 
 def _ensure_jiji_config(cfg: Path) -> None:
-    """生成/更新 jiji262 config.yml，保证 video_quality=480p。
-
-    实测结论：lowest 无音轨 → 下游转写必然失败；480p 含 AAC 128kbps 音轨，
-    是满足"省流量 + 可转写"的最低可用档。已存在的 lowest 配置就地升级为 480p。
-    """
+    """Generate/upgrade the jiji config without logging a machine-specific path."""
     if not cfg.exists():
         cfg.write_text(
             _JIJI_QUALITY_NOTE
             + f"video_quality: {_JIJI_VIDEO_QUALITY}\n"
-            + "thread: 3\n"
-            + "retry_times: 3\n"
-            + "progress:\n"
-            + "  quiet_logs: true\n",
+            + "thread: 3\nretry_times: 3\nprogress:\n  quiet_logs: true\n",
             encoding="utf-8",
         )
-        logger.info("生成 jiji262 配置: %s (video_quality=%s)", cfg, _JIJI_VIDEO_QUALITY)
+        logger.info("created jiji downloader configuration at the default quality")
         return
     text = cfg.read_text(encoding="utf-8")
     if re.search(r"^video_quality:\s*lowest\s*$", text, re.M):
         text = re.sub(r"^video_quality:\s*lowest\s*$", f"video_quality: {_JIJI_VIDEO_QUALITY}", text, flags=re.M)
         cfg.write_text(text, encoding="utf-8")
-        logger.info("jiji262 配置升级 lowest -> %s: %s", _JIJI_VIDEO_QUALITY, cfg)
     elif "video_quality:" not in text:
-        # 已有配置缺质量项：在头部显式补 480p（含注释，避免后续误改回 lowest）
         cfg.write_text(_JIJI_QUALITY_NOTE + f"video_quality: {_JIJI_VIDEO_QUALITY}\n" + text, encoding="utf-8")
-        logger.info("jiji262 配置补充 video_quality=%s: %s", _JIJI_VIDEO_QUALITY, cfg)
-    else:
-        logger.info("jiji262 配置已含 video_quality，跳过更新: %s", cfg)
 
 
-# ---------------------------------------------------------------
-# MediaCrawler 全平台适配器（预留接口）
-# ---------------------------------------------------------------
-# MediaCrawler（github.com/NanmiCoder/MediaCrawler，63k★）支持 7 平台
-# （小红书/抖音/快手/B站/微博/贴吧/知乎）的帖子与评论（含二级评论）抓取。
-# 它既可做"全平台采集兜底"，也可做"评论区采集"（热评+子评论）。
-#
-# ⚠️ 许可约束：MediaCrawler 为自定义非商业许可（禁商用、禁大规模爬取），
-#    个人知识库自用 OK；接入时仅作 CLI 子进程调用（进程隔离），不内嵌代码。
-#
-# 接入方式（启用后）：
-#   MEDIACRAWLER_DIR 指向 MediaCrawler 仓库根目录
-#   命令：uv run main.py --platform {p} --lt qrcode --type detail
-#   输出：CSV/JSON/JSONL 数据文件（需后处理提取视频直链再下载）
 MEDIACRAWLER_PLATFORMS = {"xhs", "douyin", "bilibili", "weibo", "tieba", "zhihu", "kuaishou"}
 
 
 def download_via_mediacrawler(platform: str, target: str, out_dir: Path) -> str:
-    """MediaCrawler 适配器：采集指定帖子/主页并提取视频。
-
-    Args:
-        platform: xhs/douyin/bilibili/weibo/tieba/zhihu/kuaishou
-        target: 帖子 ID 或主页链接
-        out_dir: 输出目录
-    Returns:
-        视频文件路径（若 MediaCrawler 输出为数据文件，返回其路径供后处理）
-    """
-    mc_dir = __import__("os").getenv("MEDIACRAWLER_DIR", "")
-    if not mc_dir:
-        raise PipelineOfflineError("MediaCrawler 未配置（MEDIACRAWLER_DIR）")
-    mc_dir = Path(mc_dir)
-    if not (mc_dir / "main.py").exists():
-        raise PipelineOfflineError(f"MediaCrawler 目录无效: {mc_dir}")
-    # 注意：MediaCrawler 默认从 config/base_config.py 读目标，
-    # CLI 支持 --platform/--type；此处为预留契约，实际参数按版本校准
-    cmd = ["uv", "run", "main.py", "--platform", platform, "--lt", "qrcode", "--type", "detail"]
-    logger.info("MediaCrawler: %s", " ".join(cmd))
-    subprocess.run(cmd, cwd=str(mc_dir), check=False)
-    # 输出为数据文件（CSV/JSONL），返回目录供下游处理
+    """Run the existing MediaCrawler fallback without echoing the target URL."""
+    mc_dir_value = os.getenv("MEDIACRAWLER_DIR", "")
+    if not mc_dir_value:
+        raise PipelineOfflineError("MediaCrawler is not configured")
+    mc_dir = Path(mc_dir_value)
+    if not (mc_dir / "main.py").is_file():
+        raise PipelineOfflineError("MediaCrawler directory is unavailable")
+    command = ["uv", "run", "main.py", "--platform", platform, "--lt", "qrcode", "--type", "detail"]
+    _run_cli(platform, command, cwd=mc_dir)
+    # The legacy fallback contract returns its output directory for downstream handling.
     return str(out_dir)
 
 
-def download(platform: str, url: str, media_dir: Path) -> str:
-    """下载最低可用画质视频，返回视频文件绝对路径。引擎缺失抛 PipelineOfflineError。"""
-    media_dir.mkdir(parents=True, exist_ok=True)
+def _invoke_downloader(platform: str, url: str, media_dir: Path) -> None:
     if platform == "douyin":
-        # jiji262/douyin-downloader：python run.py -c config.yml -u <url> -p <out>
-        jiji_dir = __import__("os").getenv("DOUYIN_DOWNLOADER_DIR", "")
-        if not jiji_dir:
-            raise PipelineOfflineError("抖音下载器 jiji262 未配置（DOUYIN_DOWNLOADER_DIR）")
-        cfg = Path(jiji_dir) / "config.yml"
-        _ensure_jiji_config(cfg)
-        subprocess.run(
-            [
-                "C:/Users/Administrator/.workbuddy/binaries/python/versions/3.13.12/python.exe",
-                "run.py",
-                "-c",
-                str(cfg),
-                "-u",
-                url,
-                "-p",
-                str(media_dir),
-            ],
+        jiji_dir_value = os.getenv("DOUYIN_DOWNLOADER_DIR", "")
+        if not jiji_dir_value:
+            raise PipelineOfflineError("Douyin downloader is not configured")
+        jiji_dir = Path(jiji_dir_value)
+        cfg = jiji_dir / "config.yml"
+        try:
+            _ensure_jiji_config(cfg)
+        except OSError:
+            raise PipelineOfflineError("Douyin downloader configuration is unavailable") from None
+        _run_cli(
+            platform,
+            [_python_executable(), "run.py", "-c", str(cfg), "-u", url, "-p", str(media_dir)],
             cwd=jiji_dir,
-            check=False,
         )
-    elif platform == "bilibili":
-        # yutto：python -m yutto download <url> -d <dir> -q 16（360P 最低画质省流量；B站全清晰度均含音轨）
+        return
+
+    if platform == "bilibili":
         try:
             import yutto  # noqa: F401
         except ImportError as exc:
-            raise PipelineOfflineError("yutto 未安装（pip install yutto）") from exc
-        subprocess.run(
-            [sys.executable, "-m", "yutto", "download", url, "-d", str(media_dir), "-q", "16"],
-            check=False,
-        )
-    elif platform == "xhs":
-        # XHS-Downloader：python main.py --url <url> --work_path <dir> --folder_mode False --cookie <ck>
-        # folder_mode=False 保证视频直落 work_path 根目录（_find_video 非递归查找）
-        xhs_dir = Path(__file__).resolve().parents[3] / "tools" / "xhs-downloader"
-        if not (xhs_dir / "main.py").exists():
-            raise PipelineOfflineError("XHS-Downloader 未配置（tools/xhs-downloader）")
-        cookies = _load_platform_cookies().get("xhs", {})
-        cookie_str = cookies.get("cookie", "")
-        if not cookie_str:
-            raise PipelineOfflineError("小红书下载需网页版 cookie（config/platform_cookies.json -> xhs.cookie）")
-        subprocess.run(
+            raise PipelineOfflineError("yutto is not installed") from exc
+        command = [sys.executable, "-m", "yutto", "download", url, "-d", str(media_dir), "-q", "16"]
+        configured_auth = os.getenv("BILIBILI_AUTH_FILE", "").strip()
+        auth_file = Path(configured_auth).expanduser() if configured_auth else _project_root() / "config" / "yutto_auth.toml"
+        skip_auth = os.getenv("BILIBILI_SKIP_AUTH", "").strip().casefold() in {"1", "true", "yes", "on"}
+        if auth_file.is_file() and not skip_auth:
+            command += ["--auth-file", str(auth_file)]
+        skip_danmaku = os.getenv("BILIBILI_SKIP_DANMAKU", "").strip().casefold() in {"1", "true", "yes", "on"}
+        if skip_danmaku:
+            command += ["--no-danmaku"]
+        _run_cli(platform, command)
+        return
+
+    if platform == "xhs":
+        xhs_dir = _project_root() / "tools" / "xhs-downloader"
+        script = xhs_dir / "main.py"
+        if not script.is_file():
+            raise PipelineOfflineError("XHS downloader is not configured")
+        cookie_section = _load_platform_cookies().get("xhs", {})
+        cookie_string = cookie_section.get("cookie", "") if isinstance(cookie_section, dict) else ""
+        if not isinstance(cookie_string, str) or not cookie_string:
+            raise PipelineOfflineError("XHS download requires a configured browser cookie")
+        _run_cli(
+            platform,
             [
                 sys.executable,
-                str(xhs_dir / "main.py"),
-                "--url",
-                url,
-                "--work_path",
-                str(media_dir),
-                "--folder_mode",
-                "False",
-                "--cookie",
-                cookie_str,
+                str(script),
+                "--url", url,
+                "--work_path", str(media_dir),
+                "--folder_mode", "False",
+                "--cookie", cookie_string,
             ],
-            cwd=str(xhs_dir),
-            check=False,
+            cwd=xhs_dir,
         )
-    elif platform == "twitter":
-        # yt-dlp：python -m yt_dlp -f worst <url> --cookies <file> --proxy <proxy> -o <dir>/%(title)s.%(ext)s
-        # v0.4：国内访问 x.com 必须注入代理（TWITTER_PROXY 可覆盖默认 127.0.0.1:7892）
+        return
+
+    if platform == "twitter":
         try:
             import yt_dlp  # noqa: F401
         except ImportError as exc:
-            raise PipelineOfflineError("yt-dlp 未安装（pip install yt-dlp）") from exc
-        cookies = _load_platform_cookies().get("twitter", {})
-        cookies_file = cookies.get("cookies_file", "")
+            raise PipelineOfflineError("yt-dlp is not installed") from exc
+        cookie_section = _load_platform_cookies().get("twitter", {})
+        cookies_file = cookie_section.get("cookies_file", "") if isinstance(cookie_section, dict) else ""
         proxy = os.getenv("TWITTER_PROXY", "http://127.0.0.1:7892")
-        cmd = [sys.executable, "-m", "yt_dlp", "-f", "worst", url]
+        command = [sys.executable, "-m", "yt_dlp", "-f", "worst", url]
         if cookies_file:
-            cmd += ["--cookies", str(cookies_file)]
+            command += ["--cookies", str(cookies_file)]
         else:
-            logger.warning("推特未配置 cookies_file，匿名下载大概率失败")
-        cmd += ["--proxy", proxy, "-o", str(media_dir / "%(title)s.%(ext)s")]
-        subprocess.run(cmd, check=False)
-    else:
-        # 兜底：尝试 MediaCrawler 适配器（全平台预留）
-        if platform in MEDIACRAWLER_PLATFORMS:
-            return download_via_mediacrawler(platform, url, media_dir)
-        raise PipelineOfflineError(f"平台 {platform} 无下载器")
+            logger.warning("Twitter cookies are not configured")
+        command += ["--proxy", proxy, "-o", str(media_dir / "%(title)s.%(ext)s")]
+        _run_cli(platform, command)
+        return
 
-    return _find_video(media_dir)
+    if platform in MEDIACRAWLER_PLATFORMS:
+        download_via_mediacrawler(platform, url, media_dir)
+        return
+    raise PipelineOfflineError(f"unsupported downloader platform: {platform}")
+
+
+def download_with_result(
+    platform: str,
+    url: str,
+    media_dir: Path,
+    *,
+    registered_files: Iterable[MediaFile | Mapping[str, Any]] = (),
+) -> DownloadResult:
+    """Download video/audio and return only verified new or registered original media.
+
+    ``registered_files`` accepts the shared ``MediaFile`` type or persisted
+    mappings with ``path``, ``size_bytes``, and optional ``sha256``/``media_type``.
+    Relative paths are interpreted from ``media_dir``. Unregistered existing
+    files are snapshots only; an unchanged stale file can never become success.
+    """
+    media_dir = Path(media_dir)
+    try:
+        media_dir.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        raise PipelineOfflineError("media work directory is unavailable") from None
+
+    reusable, registrations_complete = _registered_media_files(media_dir, registered_files)
+    if reusable and registrations_complete:
+        logger.info("%s media receipt reused %d registered file(s)", platform, len(reusable))
+        return DownloadResult("reused", reusable, None)
+
+    before = _snapshot(media_dir)
+    _invoke_downloader(platform, url, media_dir)
+    written = _new_media_files(media_dir, before)
+    if not written:
+        raise PipelineOfflineError(f"{platform} downloader produced no newly written original media")
+    result = DownloadResult("downloaded", written, _completed_at())
+    logger.info("%s media receipt downloaded %d validated file(s)", platform, len(result.files))
+    return result
+
+
+def _find_video(media_dir: Path) -> str:
+    """Legacy helper retained for callers that only need one media path."""
+    candidates = _original_media_paths(Path(media_dir))
+    for path in candidates:
+        if path.suffix.lower() in _VIDEO_EXTENSIONS:
+            return str(path)
+    raise PipelineOfflineError("download produced no video file")
+
+
+def download(platform: str, url: str, media_dir: Path) -> str:
+    """Backward-compatible string API; archive-aware callers use download_with_result."""
+    result = download_with_result(platform, url, media_dir)
+    for item in result.files:
+        if item.media_type == "video":
+            return str(item.path)
+    return str(result.files[0].path)
