@@ -18,6 +18,8 @@ tags:
     description: 博主管理（四平台添加/删除/归组/启停）
   - name: works
     description: 作品与三件套状态、重试、手动分析、归类
+  - name: archive
+    description: path-keyed 本地归档索引、核对、任务、文件与 CSV
   - name: link-analyses
     description: 用户提交单条视频链接后的手动入库
   - name: groups
@@ -407,6 +409,323 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  # ==================== archive ====================
+  /api/v1/archive:
+    get:
+      tags: [archive]
+      summary: 本地归档分页列表（筛选和页面共用）
+      operationId: listArchiveEntries
+      parameters:
+        - name: platform
+          in: query
+          schema: { $ref: '#/components/schemas/Platform' }
+        - name: creator_id
+          in: query
+          schema: { type: integer, minimum: 1 }
+        - name: group_id
+          in: query
+          schema: { type: integer, minimum: 1 }
+        - name: work_id
+          in: query
+          description: 可重复传入；一个 Work 可对应多个真实目录
+          style: form
+          explode: true
+          schema:
+            oneOf:
+              - { type: integer, minimum: 1 }
+              - type: array
+                items: { type: integer, minimum: 1 }
+        - name: root_key
+          in: query
+          schema: { type: string, maxLength: 32 }
+        - name: q
+          in: query
+          description: 标题、作品 ID、链接、博主或分组文字
+          schema: { type: string, maxLength: 200 }
+        - name: check_status
+          in: query
+          schema: { $ref: '#/components/schemas/ArchiveCheckStatus' }
+        - name: time_field
+          in: query
+          schema: { $ref: '#/components/schemas/ArchiveTimeField', default: published_at }
+        - name: date_from
+          in: query
+          description: 北京时间日历日，包含当天
+          schema: { type: string, format: date }
+        - name: date_to
+          in: query
+          description: 北京时间日历日，包含当天
+          schema: { type: string, format: date }
+        - name: include_unknown_time
+          in: query
+          description: 日期范围筛选时额外包含所选时间为空的记录
+          schema: { type: boolean, default: false }
+        - name: unknown_time_only
+          in: query
+          description: 只选所选时间为空的记录
+          schema: { type: boolean, default: false }
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/ArchiveLimit'
+      responses:
+        '200':
+          description: 归档分页列表
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: '#/components/schemas/Envelope' }
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/ArchivePage' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/v1/archive/policy:
+    get:
+      tags: [archive]
+      summary: 生效的时区、目录与信息文件规则及允许根
+      operationId: getArchivePolicy
+      responses:
+        '200':
+          description: 不含绝对路径的本机归档规则
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: '#/components/schemas/Envelope' }
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/ArchivePolicy' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/v1/archive/export.csv:
+    get:
+      tags: [archive]
+      summary: 导出全部匹配筛选的归档记录
+      operationId: exportArchiveCsv
+      description: 与 GET /archive 共用筛选条件；忽略 page 和 limit。成功返回原始 UTF-8 BOM CSV，错误仍是 JSON Envelope。
+      parameters:
+        - name: platform
+          in: query
+          schema: { $ref: '#/components/schemas/Platform' }
+        - name: creator_id
+          in: query
+          schema: { type: integer, minimum: 1 }
+        - name: group_id
+          in: query
+          schema: { type: integer, minimum: 1 }
+        - name: work_id
+          in: query
+          style: form
+          explode: true
+          schema:
+            oneOf:
+              - { type: integer, minimum: 1 }
+              - type: array
+                items: { type: integer, minimum: 1 }
+        - name: root_key
+          in: query
+          schema: { type: string, maxLength: 32 }
+        - name: q
+          in: query
+          schema: { type: string, maxLength: 200 }
+        - name: check_status
+          in: query
+          schema: { $ref: '#/components/schemas/ArchiveCheckStatus' }
+        - name: time_field
+          in: query
+          schema: { $ref: '#/components/schemas/ArchiveTimeField', default: published_at }
+        - name: date_from
+          in: query
+          schema: { type: string, format: date }
+        - name: date_to
+          in: query
+          schema: { type: string, format: date }
+        - name: include_unknown_time
+          in: query
+          schema: { type: boolean, default: false }
+        - name: unknown_time_only
+          in: query
+          schema: { type: boolean, default: false }
+      responses:
+        '200':
+          description: 全量 UTF-8 BOM CSV
+          content:
+            text/csv:
+              schema: { type: string, format: binary }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/v1/archive/scan:
+    post:
+      tags: [archive]
+      summary: 为一个允许根创建可恢复的索引任务
+      operationId: createArchiveScan
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ArchiveScanRequest' }
+      responses:
+        '202':
+          description: 已持久化的扫描任务
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: '#/components/schemas/Envelope' }
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/ArchiveJob' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/v1/archive/jobs/{job_id}:
+    parameters:
+      - { $ref: '#/components/parameters/ArchiveJobId' }
+    get:
+      tags: [archive]
+      summary: 获取扫描、刷新或同步任务进度
+      operationId: getArchiveJob
+      responses:
+        '200':
+          description: 归档任务状态和持久游标
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: '#/components/schemas/Envelope' }
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/ArchiveJob' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/archive/{archive_id}:
+    parameters:
+      - { $ref: '#/components/parameters/ArchiveId' }
+    get:
+      tags: [archive]
+      summary: 归档详情、媒体文件清单和修订历史
+      operationId: getArchiveEntry
+      responses:
+        '200':
+          description: 归档详情
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: '#/components/schemas/Envelope' }
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/ArchiveEntryDetail' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/archive/{archive_id}/info.csv:
+    parameters:
+      - { $ref: '#/components/parameters/ArchiveId' }
+    get:
+      tags: [archive]
+      summary: 导出单作品信息 CSV
+      operationId: exportArchiveEntryCsv
+      description: 成功返回原始 UTF-8 BOM CSV；错误使用 JSON Envelope。
+      responses:
+        '200':
+          description: 单作品 CSV
+          content:
+            text/csv:
+              schema: { type: string, format: binary }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/archive/{archive_id}/files/{file_id}:
+    parameters:
+      - { $ref: '#/components/parameters/ArchiveId' }
+      - { $ref: '#/components/parameters/ArchiveFileId' }
+    get:
+      tags: [archive]
+      summary: 按已登记文件 ID 读取媒体
+      operationId: getArchiveFile
+      description: 成功返回原始媒体字节；路径只能从该归档清单解析并校验允许根。错误使用 JSON Envelope。
+      responses:
+        '200':
+          description: 已登记媒体文件
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/archive/{archive_id}/refresh:
+    parameters:
+      - { $ref: '#/components/parameters/ArchiveId' }
+    post:
+      tags: [archive]
+      summary: 创建独立作品元数据刷新任务
+      operationId: refreshArchiveEntry
+      responses:
+        '202':
+          description: 已持久化的刷新任务
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: '#/components/schemas/Envelope' }
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/ArchiveJob' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/archive/{archive_id}/metadata:
+    parameters:
+      - { $ref: '#/components/parameters/ArchiveId' }
+    patch:
+      tags: [archive]
+      summary: 人工修正归档元数据并保留修订审计
+      operationId: patchArchiveMetadata
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ArchiveMetadataPatch' }
+      responses:
+        '200':
+          description: 更新后的归档记录
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: '#/components/schemas/Envelope' }
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/ArchiveEntry' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/v1/archive/{archive_id}/sync:
+    parameters:
+      - { $ref: '#/components/parameters/ArchiveId' }
+    post:
+      tags: [archive]
+      summary: 创建单作品信息文件同步重试任务
+      operationId: syncArchiveEntry
+      responses:
+        '202':
+          description: 已持久化的同步任务
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: '#/components/schemas/Envelope' }
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/ArchiveJob' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   # ==================== groups ====================
   /api/v1/groups:
     get:
@@ -793,6 +1112,21 @@ components:
       in: path
       required: true
       schema: { type: integer, minimum: 1 }
+    ArchiveId:
+      name: archive_id
+      in: path
+      required: true
+      schema: { type: integer, minimum: 1 }
+    ArchiveJobId:
+      name: job_id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    ArchiveFileId:
+      name: file_id
+      in: path
+      required: true
+      schema: { type: string, minLength: 1, maxLength: 200 }
     GroupId:
       name: group_id
       in: path
@@ -813,6 +1147,11 @@ components:
       in: query
       required: false
       schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+    ArchiveLimit:
+      name: limit
+      in: query
+      required: false
+      schema: { type: integer, minimum: 1, maximum: 200, default: 20 }
 
   schemas:
     Envelope:
@@ -952,7 +1291,7 @@ components:
     # ---------- works ----------
     Work:
       type: object
-      required: [id, platform, external_id, title, url, source_type, status]
+      required: [id, platform, external_id, title, url, source_type, status, downloaded_at, download_time_source]
       properties:
         id: { type: integer }
         creator_id: { type: integer, nullable: true }
@@ -962,6 +1301,8 @@ components:
         title: { type: string }
         url: { type: string }
         published_at: { type: string, format: date-time, nullable: true }
+        downloaded_at: { type: string, format: date-time, nullable: true }
+        download_time_source: { type: string, nullable: true }
         source_type: { $ref: '#/components/schemas/SourceType' }
         status: { $ref: '#/components/schemas/WorkStatus' }
         task_id: { type: string, nullable: true }
@@ -980,6 +1321,8 @@ components:
         title: { type: string }
         status: { $ref: '#/components/schemas/WorkStatus' }
         published_at: { type: string, format: date-time, nullable: true }
+        downloaded_at: { type: string, format: date-time, nullable: true }
+        download_time_source: { type: string, nullable: true }
 
     WorkDetail:
       allOf:
@@ -1006,6 +1349,187 @@ components:
         page: { type: integer }
         limit: { type: integer }
         has_more: { type: boolean }
+
+    # ---------- local archive ----------
+    ArchiveCheckStatus:
+      type: string
+      enum: [verified, needs_review, conflict, failed]
+
+    ArchiveSyncStatus:
+      type: string
+      enum: [pending, ready, failed]
+
+    ArchiveJobType:
+      type: string
+      enum: [scan, refresh, sync]
+
+    ArchiveJobStatus:
+      type: string
+      enum: [queued, running, completed, partial, failed]
+
+    ArchiveTimeField:
+      type: string
+      enum: [published_at, downloaded_at]
+
+    ArchiveFile:
+      type: object
+      required: [file_id, relative_path, name, size_bytes]
+      properties:
+        file_id: { type: string, minLength: 1, maxLength: 200, description: 稳定文件标识 }
+        relative_path: { type: string, maxLength: 1000, description: 相对当前归档目录的路径 }
+        name: { type: string }
+        size_bytes: { type: integer, minimum: 0 }
+        media_type: { type: string, nullable: true }
+        sha256: { type: string, nullable: true }
+
+    ArchiveEntry:
+      type: object
+      required: [id, root_key, relative_directory, work_id, platform, external_id, title, url, creator_id, creator_label, group_id, group_label, published_at, published_time_source, published_time_precision, downloaded_at, download_time_source, download_time_precision, metadata_checked_at, check_status, metadata_version, metadata, files, sync_status, sync_error, synced_at, created_at, updated_at]
+      properties:
+        id: { type: integer }
+        root_key: { type: string, maxLength: 32 }
+        relative_directory: { type: string, description: 归档根内的相对目录 }
+        work_id: { type: integer, nullable: true, description: 匹配到的流水线作品 ID }
+        platform: { $ref: '#/components/schemas/Platform' }
+        external_id: { type: string, nullable: true }
+        title: { type: string }
+        url: { type: string, nullable: true }
+        creator_id: { type: integer, nullable: true }
+        creator_label: { type: string, nullable: true }
+        group_id: { type: integer, nullable: true }
+        group_label: { type: string, nullable: true }
+        published_at: { type: string, format: date-time, nullable: true }
+        published_time_source: { type: string, nullable: true }
+        published_time_precision: { type: string, nullable: true }
+        downloaded_at: { type: string, format: date-time, nullable: true }
+        download_time_source: { type: string, nullable: true }
+        download_time_precision: { type: string, nullable: true }
+        metadata_checked_at: { type: string, format: date-time, nullable: true }
+        check_status: { $ref: '#/components/schemas/ArchiveCheckStatus' }
+        metadata_version: { type: integer, minimum: 1 }
+        metadata:
+          type: object
+          additionalProperties: true
+          description: 按 metadata_version 解释的版本化附加元数据
+        files:
+          type: array
+          items: { $ref: '#/components/schemas/ArchiveFile' }
+        sync_status: { $ref: '#/components/schemas/ArchiveSyncStatus' }
+        sync_error: { type: string, nullable: true }
+        synced_at: { type: string, format: date-time, nullable: true }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    ArchiveRevision:
+      type: object
+      required: [id, archive_entry_id, before_values, after_values, source, changed_at]
+      properties:
+        id: { type: integer }
+        archive_entry_id: { type: integer }
+        before_values: { type: object, additionalProperties: true }
+        after_values: { type: object, additionalProperties: true }
+        source: { type: string }
+        changed_at: { type: string, format: date-time }
+
+    ArchiveEntryDetail:
+      allOf:
+        - { $ref: '#/components/schemas/ArchiveEntry' }
+        - type: object
+          required: [revisions]
+          properties:
+            revisions:
+              type: array
+              items: { $ref: '#/components/schemas/ArchiveRevision' }
+
+    ArchivePage:
+      type: object
+      required: [items, total, page, limit, has_more]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/ArchiveEntry' }
+        total: { type: integer, minimum: 0 }
+        page: { type: integer, minimum: 1 }
+        limit: { type: integer, minimum: 1, maximum: 200 }
+        has_more: { type: boolean }
+
+    ArchiveRootPolicy:
+      type: object
+      required: [root_key, label, configured]
+      properties:
+        root_key: { type: string }
+        label: { type: string }
+        configured: { type: boolean, description: 根目录当前可用；不返回机器路径 }
+
+    ArchivePlatformOption:
+      type: object
+      required: [value, label]
+      properties:
+        value: { $ref: '#/components/schemas/Platform' }
+        label: { type: string }
+
+    ArchivePolicy:
+      type: object
+      required: [timezone, directory_template, information_files, collection_file_name, catalog_file_name, platforms, roots]
+      properties:
+        timezone: { type: string, enum: [Asia/Shanghai] }
+        directory_template: { type: string }
+        information_files:
+          type: array
+          items: { type: string }
+        collection_file_name: { type: string }
+        catalog_file_name: { type: string }
+        platforms:
+          type: array
+          items: { $ref: '#/components/schemas/ArchivePlatformOption' }
+        roots:
+          type: array
+          items: { $ref: '#/components/schemas/ArchiveRootPolicy' }
+
+    ArchiveJob:
+      type: object
+      required: [id, job_type, status, root_key, relative_directory, archive_entry_id, cursor, statistics, error, lease_owner, lease_expires_at, lease_attempts, created_at, updated_at, started_at, completed_at]
+      properties:
+        id: { type: string, format: uuid }
+        job_type: { $ref: '#/components/schemas/ArchiveJobType' }
+        status: { $ref: '#/components/schemas/ArchiveJobStatus' }
+        root_key: { type: string, nullable: true }
+        relative_directory: { type: string, nullable: true }
+        archive_entry_id: { type: integer, nullable: true }
+        cursor: { type: object, additionalProperties: true }
+        statistics: { type: object, additionalProperties: true }
+        error: { type: string, nullable: true }
+        lease_owner: { type: string, nullable: true }
+        lease_expires_at: { type: string, format: date-time, nullable: true }
+        lease_attempts: { type: integer, minimum: 0 }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        started_at: { type: string, format: date-time, nullable: true }
+        completed_at: { type: string, format: date-time, nullable: true }
+
+    ArchiveScanRequest:
+      type: object
+      required: [root_key]
+      additionalProperties: false
+      properties:
+        root_key: { type: string, minLength: 1, maxLength: 32 }
+        relative_directory: { type: string, nullable: true, maxLength: 1000 }
+
+    ArchiveMetadataPatch:
+      type: object
+      minProperties: 1
+      additionalProperties: false
+      properties:
+        platform: { $ref: '#/components/schemas/Platform' }
+        external_id: { type: string, nullable: true, maxLength: 200 }
+        title: { type: string, minLength: 1, maxLength: 1000 }
+        url: { type: string, nullable: true, maxLength: 2000 }
+        creator_id: { type: integer, nullable: true, minimum: 1 }
+        creator_label: { type: string, nullable: true, maxLength: 500 }
+        group_id: { type: integer, nullable: true, minimum: 1 }
+        group_label: { type: string, nullable: true, maxLength: 500 }
+        published_at: { type: string, format: date-time, nullable: true }
+        published_time_precision: { type: string, nullable: true, maxLength: 20 }
 
     TaskStage:
       type: object

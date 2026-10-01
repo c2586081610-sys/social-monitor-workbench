@@ -13,6 +13,8 @@ class WorkSummary(BaseModel):
     title: str
     status: WorkStatus
     published_at: str | None
+    downloaded_at: str | None = None
+    download_time_source: str | None = None
 
 
 class Work(BaseModel):
@@ -26,6 +28,8 @@ class Work(BaseModel):
     title: str
     url: str
     published_at: str | None
+    downloaded_at: str | None
+    download_time_source: str | None
     source_type: SourceType
     status: WorkStatus
     task_id: str | None

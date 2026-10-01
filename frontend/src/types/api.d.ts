@@ -88,6 +88,8 @@ export interface Work {
   title: string;
   url: string;
   published_at: string | null;
+  downloaded_at: string | null;
+  download_time_source: string | null;
   source_type: SourceType;
   status: WorkStatus;
   task_id: string | null;
@@ -107,6 +109,8 @@ export interface WorkSummary {
   title: string;
   status: WorkStatus;
   published_at: string | null;
+  downloaded_at?: string | null;
+  download_time_source?: string | null;
   /** 笔记已完成标记：note_path 存在 = 笔记已生成（后端 recent_works 当前未返回该字段，预留可选）。 */
   note_path?: string | null;
 }
@@ -134,6 +138,148 @@ export interface WorkDetail extends Work {
 
 export interface WorkPage extends PageMeta {
   items: Work[];
+}
+
+// ---------------- local archive ----------------
+export type ArchiveCheckStatus = 'verified' | 'needs_review' | 'conflict' | 'failed';
+export type ArchiveSyncStatus = 'pending' | 'ready' | 'failed';
+export type ArchiveJobType = 'scan' | 'refresh' | 'sync';
+export type ArchiveJobStatus = 'queued' | 'running' | 'completed' | 'partial' | 'failed';
+export type ArchiveTimeField = 'published_at' | 'downloaded_at';
+
+export interface ArchiveFile {
+  /** Stable identifier used by the authenticated media-file endpoint. */
+  file_id: string;
+  /** Path relative to this archive entry, never an absolute machine path. */
+  relative_path: string;
+  name: string;
+  size_bytes: number;
+  media_type?: string | null;
+  sha256?: string | null;
+}
+
+export interface ArchiveEntry {
+  id: number;
+  root_key: string;
+  relative_directory: string;
+  work_id: number | null;
+  platform: Platform;
+  external_id: string | null;
+  title: string;
+  url: string | null;
+  creator_id: number | null;
+  creator_label: string | null;
+  group_id: number | null;
+  group_label: string | null;
+  published_at: string | null;
+  published_time_source: string | null;
+  published_time_precision: string | null;
+  downloaded_at: string | null;
+  download_time_source: string | null;
+  download_time_precision: string | null;
+  metadata_checked_at: string | null;
+  check_status: ArchiveCheckStatus;
+  metadata_version: number;
+  metadata: Record<string, unknown>;
+  files: ArchiveFile[];
+  sync_status: ArchiveSyncStatus;
+  sync_error: string | null;
+  synced_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ArchiveRevision {
+  id: number;
+  archive_entry_id: number;
+  before_values: Record<string, unknown>;
+  after_values: Record<string, unknown>;
+  source: string;
+  changed_at: string;
+}
+
+export interface ArchiveEntryDetail extends ArchiveEntry {
+  revisions: ArchiveRevision[];
+}
+
+export interface ArchivePage extends PageMeta {
+  items: ArchiveEntry[];
+}
+
+export interface ArchiveRootPolicy {
+  root_key: string;
+  label: string;
+  configured: boolean;
+}
+
+export interface ArchivePlatformOption {
+  value: Platform;
+  label: string;
+}
+
+export interface ArchivePolicy {
+  timezone: 'Asia/Shanghai';
+  directory_template: string;
+  information_files: string[];
+  collection_file_name: string;
+  catalog_file_name: string;
+  platforms: ArchivePlatformOption[];
+  roots: ArchiveRootPolicy[];
+}
+
+export interface ArchiveJob {
+  id: string;
+  job_type: ArchiveJobType;
+  status: ArchiveJobStatus;
+  root_key: string | null;
+  relative_directory: string | null;
+  archive_entry_id: number | null;
+  cursor: Record<string, unknown>;
+  statistics: Record<string, unknown>;
+  error: string | null;
+  lease_owner: string | null;
+  lease_expires_at: string | null;
+  lease_attempts: number;
+  created_at: string;
+  updated_at: string;
+  started_at: string | null;
+  completed_at: string | null;
+}
+
+export interface ArchiveFilters {
+  platform?: Platform;
+  creator_id?: number;
+  group_id?: number;
+  /** Repeated values are supported because one Work can have several local copies. */
+  work_id?: number | number[];
+  root_key?: string;
+  q?: string;
+  check_status?: ArchiveCheckStatus;
+  time_field?: ArchiveTimeField;
+  date_from?: string;
+  date_to?: string;
+  include_unknown_time?: boolean;
+  unknown_time_only?: boolean;
+  page?: number;
+  limit?: number;
+}
+
+export interface ArchiveScanRequest {
+  root_key: string;
+  relative_directory?: string | null;
+}
+
+export interface ArchiveMetadataPatch {
+  platform?: Platform;
+  external_id?: string | null;
+  title?: string;
+  url?: string | null;
+  creator_id?: number | null;
+  creator_label?: string | null;
+  group_id?: number | null;
+  group_label?: string | null;
+  published_at?: string | null;
+  published_time_precision?: string | null;
 }
 
 export interface LocalMediaFile {

@@ -4,7 +4,9 @@
 
 .env 加载：模块导入时读取 {backend}/.env（仅补缺失键，系统环境变量优先）。
 """
+import json
 import os
+import re
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -22,6 +24,44 @@ def _workspace_root() -> Path:
 def _env_path(name: str, default: Path) -> Path:
     val = os.getenv(name)
     return Path(val).resolve() if val else default
+
+
+_ARCHIVE_ROOT_KEY = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
+ARCHIVE_PLATFORM_LABELS: dict[str, str] = {
+    "douyin": "抖音",
+    "bilibili": "哔哩哔哩",
+    "xhs": "小红书",
+    "twitter": "Twitter/X",
+    "wechat": "微信公众号",
+}
+ARCHIVE_DIRECTORY_TEMPLATE = "{published_at}_{platform}_{title}_{external_id}"
+ARCHIVE_INFORMATION_FILES = ("作品信息.csv", "作品信息.json", "作品信息.md")
+ARCHIVE_COLLECTION_FILE = "合集清单.csv"
+ARCHIVE_CATALOG_FILE = "归档总清单.csv"
+
+
+def _archive_root_paths(media_root: Path, workspace_root: Path) -> dict[str, Path]:
+    """Load server-only root mappings; paths never enter public policy responses."""
+    roots = {"media": media_root, "fitness": workspace_root / "健身"}
+    raw = os.getenv("ARCHIVE_ROOTS", "").strip()
+    if not raw:
+        return roots
+    try:
+        configured = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ValueError("ARCHIVE_ROOTS must map root keys to paths as a JSON object") from exc
+    if not isinstance(configured, dict):
+        raise ValueError("ARCHIVE_ROOTS must map root keys to paths as a JSON object")
+    for key, value in configured.items():
+        if not isinstance(key, str) or not _ARCHIVE_ROOT_KEY.fullmatch(key):
+            raise ValueError(f"Invalid archive root key: {key!r}")
+        if key == "media":
+            # MEDIA_ROOT is the only source of the project-generated media root.
+            continue
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError(f"Archive root {key!r} must map to a non-empty path")
+        roots[key] = Path(value).expanduser().resolve()
+    return roots
 
 
 class Settings:
@@ -48,6 +88,8 @@ class Settings:
         # 存储
         self.database_path: Path = _env_path("DATABASE_PATH", ws / "aggregator.db")
         self.media_root: Path = _env_path("MEDIA_ROOT", ws / "media")
+        # These machine-local mappings are never returned as absolute paths by the API.
+        self.archive_root_paths: dict[str, Path] = _archive_root_paths(self.media_root, ws)
         self.obsidian_root: Path = _env_path("OBSIDIAN_ROOT", ws / "Obsidian")
         self.workbuddy_dir: Path = _env_path("WORKBUDDY_DIR", ws / "workbuddy")
         self.pending_dir: Path = self.workbuddy_dir / "pending"
@@ -78,3 +120,30 @@ class Settings:
 
 
 settings = Settings()
+
+
+def archive_root_policy() -> dict[str, object]:
+    """Return the public, path-free archive rules and root availability."""
+    roots = []
+    for key, path in sorted(settings.archive_root_paths.items()):
+        try:
+            configured = path.is_dir()
+        except OSError:
+            configured = False
+        roots.append({
+            "root_key": key,
+            "label": "项目媒体" if key == "media" else "健身素材" if key == "fitness" else key,
+            "configured": configured,
+        })
+    return {
+        "timezone": "Asia/Shanghai",
+        "directory_template": ARCHIVE_DIRECTORY_TEMPLATE,
+        "information_files": list(ARCHIVE_INFORMATION_FILES),
+        "collection_file_name": ARCHIVE_COLLECTION_FILE,
+        "catalog_file_name": ARCHIVE_CATALOG_FILE,
+        "platforms": [
+            {"value": value, "label": label}
+            for value, label in ARCHIVE_PLATFORM_LABELS.items()
+        ],
+        "roots": roots,
+    }

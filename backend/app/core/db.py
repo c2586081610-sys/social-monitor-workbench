@@ -70,6 +70,8 @@ def init_db() -> None:
         _ensure_column(conn, "poll_logs", "new_works", "INTEGER NOT NULL DEFAULT 0")
         # v0.6 迁移：works 新增 cover_url（作品封面图，前端列表展示）
         _ensure_column(conn, "works", "cover_url", "TEXT")
+        _ensure_column(conn, "works", "downloaded_at", "TEXT")
+        _ensure_column(conn, "works", "download_time_source", "TEXT")
 
     with SessionLocal() as db:
         from app.repositories.health_repo import upsert_cookie
