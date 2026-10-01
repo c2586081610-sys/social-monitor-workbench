@@ -27,6 +27,12 @@ export function buildQuery(params: object = {}): string {
   const search = new URLSearchParams();
   Object.entries(params).forEach(([key, value]) => {
     if (value === undefined || value === null || value === '') return;
+    if (Array.isArray(value)) {
+      value.forEach((item) => {
+        if (item !== undefined && item !== null && item !== '') search.append(key, String(item));
+      });
+      return;
+    }
     search.set(key, String(value));
   });
   const qs = search.toString();
@@ -86,4 +92,42 @@ export function patchJson<T>(path: string, body: unknown): Promise<T> {
 
 export function deleteJson<T>(path: string): Promise<T> {
   return request<T>(path, { method: 'DELETE' });
+}
+
+/** 读取受 Bearer 保护的 CSV/媒体等原始响应；JSON 错误仍按 Envelope 抛出。 */
+export async function requestBlob(path: string, options: RequestInit = {}): Promise<Blob> {
+  const token = getToken();
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    Accept: '*/*',
+    ...(options.headers as Record<string, string> | undefined),
+  };
+  if (token) headers.Authorization = `Bearer ${token}`;
+
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE_URL}${path}`, { ...options, headers });
+  } catch {
+    throw new ApiError(0, 0, '无法连接聚合 API，请确认后端已启动（uvicorn app.main:app --port 8000）');
+  }
+
+  const contentType = res.headers.get('content-type')?.toLowerCase() ?? '';
+  const isJson = contentType.includes('application/json') || contentType.includes('+json');
+  if (!res.ok || isJson) {
+    let body: Partial<Envelope<unknown>> | null = null;
+    try {
+      body = (await res.json()) as Partial<Envelope<unknown>>;
+    } catch {
+      body = null;
+    }
+
+    const code = body?.code ?? res.status;
+    if (code === 401 || res.status === 401) emitUnauthorized();
+    if (code === 2001) emitReloginRequired();
+
+    const message = body?.message || (isJson && res.ok ? '服务器未返回文件内容' : `请求失败（HTTP ${res.status}）`);
+    throw new ApiError(code, res.status, message, body?.data ?? null);
+  }
+
+  return res.blob();
 }

@@ -1,18 +1,27 @@
 /** P4 作品详情：三张状态卡（下载/转写/AI笔记）+ 打开 AI 笔记 + 失败原因 + 重试 + 关键帧 + 标签。 */
 import { useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { ArrowLeft, AudioLines, ExternalLink, FileText, MonitorPlay, RotateCcw, Sparkles } from 'lucide-react';
+import { Archive, ArrowLeft, AudioLines, ExternalLink, FileText, MonitorPlay, RotateCcw, Sparkles } from 'lucide-react';
 import { StatusBadge } from '../components/common/StatusBadge';
 import PlatformBadge from '../components/common/PlatformBadge';
 import OpenNoteButton from '../components/work/OpenNoteButton';
 import { ErrorState, LoadingState } from '../components/common/StateViews';
 import { getWork, listWorkFrames, retryWork, analyzeWork } from '../services/works';
+import { listAllArchiveEntriesByWork } from '../services/archive';
 import { useAsyncData, useMutation, usePolling } from '../hooks/useApi';
 import { stageProgress } from '../utils/stage';
 import type { StageKey } from '../utils/stage';
-import { formatDateTime, formatSeconds } from '../utils/format';
+import { formatArchiveDateTime, formatDateTime, formatSeconds } from '../utils/format';
 import { RUNNING_STATUSES } from '../utils/constants';
-import type { Frame } from '../types/api.d';
+import type { ArchiveCheckStatus, Frame } from '../types/api.d';
+import { safeHttpUrl } from '../utils/urls';
+
+const ARCHIVE_CHECK_LABEL: Record<ArchiveCheckStatus, string> = {
+  verified: '已核实',
+  needs_review: '待核实',
+  conflict: '存在冲突',
+  failed: '失败',
+};
 
 const STAGE_ICON: Record<StageKey, typeof FileText> = {
   download: FileText,
@@ -27,6 +36,7 @@ export default function WorkDetailPage() {
 
   const workQuery = useAsyncData(() => getWork(workId), [workId]);
   const framesQuery = useAsyncData(() => listWorkFrames(workId), [workId]);
+  const archiveQuery = useAsyncData(() => listAllArchiveEntriesByWork(workId), [workId], Number.isInteger(workId) && workId > 0);
   const retryMutation = useMutation((wid: number) => retryWork(wid));
   const analyzeMutation = useMutation((wid: number) => analyzeWork(wid));
 
@@ -35,6 +45,7 @@ export default function WorkDetailPage() {
   usePolling(() => {
     workQuery.refetch();
     framesQuery.refetch();
+    archiveQuery.refetch();
   }, hasRunning && !workQuery.loading, 5000);
 
   if (workQuery.loading) return <LoadingState label="加载作品详情…" />;
@@ -69,6 +80,17 @@ export default function WorkDetailPage() {
   };
 
   const frames = framesQuery.data?.items ?? [];
+  const archiveEntries = archiveQuery.data ?? [];
+  const archiveCounts = archiveEntries.reduce<Record<ArchiveCheckStatus, number>>((counts, entry) => {
+    counts[entry.check_status] += 1;
+    return counts;
+  }, { verified: 0, needs_review: 0, conflict: 0, failed: 0 });
+  const safeWorkUrl = safeHttpUrl(work.url);
+  const downloadedLabel = work.download_time_source === 'not_required'
+    ? '无需媒体下载'
+    : work.downloaded_at
+      ? `${formatDateTime(work.downloaded_at)}（来源 ${work.download_time_source ?? '未知'}）`
+      : '下载时间未知';
 
   return (
     <div className="space-y-4">
@@ -86,7 +108,7 @@ export default function WorkDetailPage() {
               <StatusBadge status={work.status} notePath={work.note_path} />
             </div>
             <p className="mt-1 text-xs text-ink-muted">
-              发布于 {formatDateTime(work.published_at)} · 重试 {work.retry_count} 次
+              发布时间（北京时间）{formatDateTime(work.published_at)} · 下载完成时间（北京时间）{downloadedLabel} · 重试 {work.retry_count} 次
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -110,15 +132,17 @@ export default function WorkDetailPage() {
               <Sparkles className="h-4 w-4" />
               手动生成 AI 笔记
             </button>
-            <a
-              href={work.url}
-              target="_blank"
-              rel="noreferrer"
-              className="inline-flex items-center gap-1.5 rounded-md border border-line px-3 py-1.5 text-sm text-ink-secondary transition-colors hover:bg-sidebar"
-            >
-              <ExternalLink className="h-4 w-4" />
-              原作品
-            </a>
+            {safeWorkUrl ? (
+              <a
+                href={safeWorkUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1.5 rounded-md border border-line px-3 py-1.5 text-sm text-ink-secondary transition-colors hover:bg-sidebar"
+              >
+                <ExternalLink className="h-4 w-4" />
+                平台原作品
+              </a>
+            ) : null}
             <Link
               to={`/works/${workId}/local`}
               className="inline-flex items-center gap-1.5 rounded-md border border-line px-3 py-1.5 text-sm text-ink-secondary transition-colors hover:bg-sidebar"
@@ -136,6 +160,40 @@ export default function WorkDetailPage() {
           </div>
         ) : null}
       </div>
+
+      <section className="rounded-lg border border-line bg-surface p-4 shadow-card">
+        <div className="flex flex-wrap items-start gap-2">
+          <Archive className="mt-0.5 h-4 w-4 text-primary" />
+          <div className="min-w-0 flex-1">
+            <h2 className="text-sm font-semibold text-ink">本地归档核对</h2>
+            <p className="mt-1 text-xs text-ink-muted">
+              {archiveQuery.loading ? '正在读取与此作品关联的全部物理目录…' : archiveQuery.error ? '归档摘要暂不可用。' : archiveEntries.length === 0 ? '暂无关联归档目录。' : `关联 ${archiveEntries.length} 个物理目录：已核实 ${archiveCounts.verified} · 待核实 ${archiveCounts.needs_review} · 冲突 ${archiveCounts.conflict} · 失败 ${archiveCounts.failed}`}
+            </p>
+          </div>
+          <Link to={`/archive?work_id=${work.id}`} className="rounded-md border border-line px-2.5 py-1.5 text-xs text-ink-secondary hover:bg-sidebar">在本地归档中查看</Link>
+        </div>
+        {archiveQuery.error ? <p role="alert" className="mt-2 text-xs text-danger">{archiveQuery.error.message}</p> : null}
+        {archiveEntries.length > 0 ? (
+          <ul className="mt-3 divide-y divide-line rounded-md border border-line">
+            {archiveEntries.map((entry) => (
+              <li key={entry.id} className="flex flex-wrap items-start gap-2 px-3 py-2 text-xs">
+                <span className="min-w-0 flex-1">
+                  <span className="font-medium text-ink">{entry.root_key} / {entry.relative_directory}</span>
+                  <span className="mt-0.5 block text-ink-muted">
+                    发布时间（北京时间）{formatArchiveDateTime(entry.published_at, entry.published_time_precision, '待核实')}
+                    {' · '}下载完成时间（北京时间）{formatArchiveDateTime(entry.downloaded_at, entry.download_time_precision, entry.download_time_source === 'not_required' ? '无需媒体下载' : '未知')}
+                    {' · '}{entry.files.length} 个登记媒体文件
+                  </span>
+                </span>
+                <span className={`rounded-full px-2 py-0.5 ${entry.check_status === 'verified' ? 'bg-success-light text-success' : entry.check_status === 'failed' ? 'bg-danger-light text-danger' : 'bg-warning-light text-warning'}`}>
+                  {ARCHIVE_CHECK_LABEL[entry.check_status]}
+                </span>
+                <span className="rounded-full bg-sidebar px-2 py-0.5 text-ink-secondary">{entry.sync_status === 'ready' ? '文件已同步' : entry.sync_status === 'failed' ? '同步失败' : '待同步'}</span>
+              </li>
+            ))}
+          </ul>
+        ) : null}
+      </section>
 
       {/* 三张状态卡 */}
       <section className="grid grid-cols-1 gap-3 md:grid-cols-3">

@@ -5,6 +5,7 @@ import { CookieStatusBadge, ToneBadge } from '../components/common/StatusBadge';
 import { ErrorState, LoadingState } from '../components/common/StateViews';
 import Toggle from '../components/common/Toggle';
 import { getCookieHealth, getSystemHealth, pingHealth } from '../services/health';
+import { getArchivePolicy } from '../services/archive';
 import { useAsyncData, usePolling } from '../hooks/useApi';
 import { useRelogin } from '../state/relogin';
 import { API_BASE_URL, getToken, setToken } from '../config/api';
@@ -47,6 +48,7 @@ export default function SettingsPage() {
 
   const cookieQuery = useAsyncData(() => getCookieHealth(), []);
   const systemQuery = useAsyncData(() => getSystemHealth(), []);
+  const archivePolicyQuery = useAsyncData(() => getArchivePolicy(), []);
   usePolling(cookieQuery.refetch, true, 30000);
 
   const cookies = cookieQuery.data?.items ?? [];
@@ -118,6 +120,63 @@ export default function SettingsPage() {
         {connMsg ? (
           <p className={`mt-2 text-sm ${connOk ? 'text-success' : 'text-danger'}`}>{connMsg}</p>
         ) : null}
+      </Section>
+
+      <Section title="本地归档规则" desc="读取服务端当前生效的设置；页面只显示根标识与友好名称，不返回机器绝对路径。">
+        {archivePolicyQuery.loading ? (
+          <LoadingState label="读取本地归档规则…" />
+        ) : archivePolicyQuery.error || !archivePolicyQuery.data ? (
+          <ErrorState message={archivePolicyQuery.error?.message ?? '归档规则暂不可用'} onRetry={archivePolicyQuery.refetch} />
+        ) : (
+          <div className="space-y-3 text-sm">
+            <div className="grid gap-2 sm:grid-cols-2">
+              <div className="rounded-md border border-line px-3 py-2">
+                <p className="text-xs text-ink-muted">归档时区</p>
+                <p className="mt-1 font-medium text-ink">{archivePolicyQuery.data.timezone}（北京时间）</p>
+              </div>
+              <div className="rounded-md border border-line px-3 py-2">
+                <p className="text-xs text-ink-muted">新目录命名规则</p>
+                <p className="mt-1 break-all font-mono text-xs text-ink-secondary">{archivePolicyQuery.data.directory_template}</p>
+              </div>
+            </div>
+            <div className="rounded-md border border-line px-3 py-2">
+              <p className="text-xs text-ink-muted">单作品信息文件</p>
+              <p className="mt-1 break-words text-xs text-ink-secondary">{archivePolicyQuery.data.information_files.join(' · ') || '未配置'}</p>
+            </div>
+            <div className="grid gap-2 sm:grid-cols-2">
+              <div className="rounded-md border border-line px-3 py-2">
+                <p className="text-xs text-ink-muted">合集清单文件</p>
+                <p className="mt-1 text-xs text-ink-secondary">{archivePolicyQuery.data.collection_file_name}</p>
+              </div>
+              <div className="rounded-md border border-line px-3 py-2">
+                <p className="text-xs text-ink-muted">归档总清单文件</p>
+                <p className="mt-1 text-xs text-ink-secondary">{archivePolicyQuery.data.catalog_file_name}</p>
+              </div>
+            </div>
+            <div className="rounded-md border border-info/30 bg-info-light px-3 py-2 text-xs leading-5 text-info">
+              <p className="font-semibold">时间来源约定</p>
+              <p>发布时间只采用平台信息或人工核实；没有证据时保持未知。下载完成时间只记录已验证媒体的真实写入完成，不用扫描时间、文件时间或重复使用媒体的时间代替。</p>
+              <p>网页日期筛选按北京时间日历日解释；日/分钟精度保持原精度显示。</p>
+            </div>
+            <div>
+              <p className="mb-1 text-xs font-medium text-ink-secondary">允许的平台</p>
+              <div className="flex flex-wrap gap-2">
+                {archivePolicyQuery.data.platforms.map((platform) => (
+                  <span key={platform.value} className="rounded-full bg-sidebar px-2.5 py-1 text-xs text-ink-secondary">{platform.label}</span>
+                ))}
+              </div>
+              <p className="mb-1 mt-3 text-xs font-medium text-ink-secondary">服务端允许的归档根目录</p>
+              <div className="grid gap-2 sm:grid-cols-2">
+                {archivePolicyQuery.data.roots.map((root) => (
+                  <div key={root.root_key} className="flex items-center justify-between gap-3 rounded-md border border-line px-3 py-2 text-xs">
+                    <span className="min-w-0 truncate text-ink">{root.label} <span className="font-mono text-ink-muted">({root.root_key})</span></span>
+                    <span className={`shrink-0 rounded-full px-2 py-0.5 ${root.configured ? 'bg-success-light text-success' : 'bg-warning-light text-warning'}`}>{root.configured ? '可用' : '当前不可用'}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
       </Section>
 
       {/* 凭据健康度 */}

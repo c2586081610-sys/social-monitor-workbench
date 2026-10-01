@@ -1,4 +1,25 @@
-/** 时间 / 时长格式化（统一本地时区展示；数据库存 ISO-8601 UTC）。 */
+/** 时间 / 时长格式化；归档时间统一按北京时间（Asia/Shanghai）展示，数据库存 ISO-8601 UTC。 */
+
+export const ARCHIVE_TIME_ZONE = 'Asia/Shanghai' as const;
+
+type DatePrecision = 'day' | 'minute' | 'second';
+
+function beijingParts(date: Date): Record<string, string> {
+  return Object.fromEntries(
+    new Intl.DateTimeFormat('en-CA', {
+      timeZone: ARCHIVE_TIME_ZONE,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hourCycle: 'h23',
+    })
+      .formatToParts(date)
+      .map((part): [string, string] => [part.type, part.value]),
+  );
+}
 
 export function parseDate(iso?: string | null): Date | null {
   if (!iso) return null;
@@ -9,15 +30,61 @@ export function parseDate(iso?: string | null): Date | null {
 export function formatDateTime(iso?: string | null): string {
   const d = parseDate(iso);
   if (!d) return '—';
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  const p = beijingParts(d);
+  return `${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute}`;
 }
 
 export function formatDate(iso?: string | null): string {
   const d = parseDate(iso);
   if (!d) return '—';
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  const p = beijingParts(d);
+  return `${p.year}-${p.month}-${p.day}`;
+}
+
+/** 按已声明精度格式化归档时间，不为日期或分钟精度补写显示秒数。 */
+export function formatArchiveDateTime(
+  iso?: string | null,
+  precision?: string | null,
+  unknownLabel = '未知',
+): string {
+  const d = parseDate(iso);
+  if (!d) return unknownLabel;
+  const p = beijingParts(d);
+  const day = `${p.year}-${p.month}-${p.day}`;
+  const normalized = precision?.trim().toLowerCase();
+  if (normalized === 'day' || normalized === 'date' || normalized === '日') return day;
+  if (normalized === 'second' || normalized === 'seconds' || normalized === '秒') {
+    return `${day} ${p.hour}:${p.minute}:${p.second}`;
+  }
+  return `${day} ${p.hour}:${p.minute}`;
+}
+
+/** 为 date / datetime-local 输入准备北京时间字段。 */
+export function toBeijingDateInput(iso?: string | null): string {
+  const d = parseDate(iso);
+  if (!d) return '';
+  const p = beijingParts(d);
+  return `${p.year}-${p.month}-${p.day}`;
+}
+
+export function toBeijingDateTimeInput(iso?: string | null, includeSeconds = false): string {
+  const d = parseDate(iso);
+  if (!d) return '';
+  const p = beijingParts(d);
+  const base = `${p.year}-${p.month}-${p.day}T${p.hour}:${p.minute}`;
+  return includeSeconds ? `${base}:${p.second}` : base;
+}
+
+/** 将用户明确填写的北京时间转换为 UTC ISO；精度另由 published_time_precision 保存。 */
+export function fromBeijingDateInput(value: string, precision: DatePrecision): string | null {
+  if (!value) return null;
+  const localValue = precision === 'day'
+    ? `${value}T00:00:00`
+    : precision === 'minute'
+      ? `${value}:00`
+      : value;
+  const date = new Date(`${localValue}+08:00`);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
 }
 
 export function relativeTime(iso?: string | null): string {

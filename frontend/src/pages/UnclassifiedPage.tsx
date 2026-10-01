@@ -56,7 +56,7 @@ export default function UnclassifiedPage() {
         <Inbox className="h-5 w-5 text-primary" />
         <div>
           <h1 className="text-lg font-semibold text-ink">待分类队列</h1>
-          <p className="text-xs text-ink-muted">未归类作品池：手动选择分组归类后，将移入对应分组目录（media + Obsidian 双目录）。</p>
+          <p className="text-xs text-ink-muted">未归类作品池：手动选择分组后会更新作品分组、归档索引与清单；已有媒体位置保持不变，笔记仍按现有规则处理。</p>
         </div>
       </div>
 

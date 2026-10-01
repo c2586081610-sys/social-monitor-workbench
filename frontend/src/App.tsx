@@ -10,6 +10,7 @@ import TagsPage from './pages/TagsPage';
 import UnclassifiedPage from './pages/UnclassifiedPage';
 import LexiconPage from './pages/LexiconPage';
 import SettingsPage from './pages/SettingsPage';
+import ArchivePage from './pages/ArchivePage';
 
 export default function App() {
   return (
@@ -22,6 +23,7 @@ export default function App() {
         <Route path="/works/:id/local" element={<WorkLocalViewPage />} />
         <Route path="/tags" element={<TagsPage />} />
         <Route path="/unclassified" element={<UnclassifiedPage />} />
+        <Route path="/archive" element={<ArchivePage />} />
         <Route path="/lexicon" element={<LexiconPage />} />
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />

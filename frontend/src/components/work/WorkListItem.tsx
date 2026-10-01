@@ -1,6 +1,6 @@
 /** 作品列表项：原封面 + 标题/时间 + 三件套进度 + 状态徽标 + 操作（重试 / 打开笔记 / 详情）。 */
 import { Link } from 'react-router-dom';
-import { ExternalLink, ImageIcon, RotateCcw } from 'lucide-react';
+import { Archive, ExternalLink, ImageIcon, RotateCcw } from 'lucide-react';
 import { useState } from 'react';
 import { retryWork } from '../../services/works';
 import { useMutation } from '../../hooks/useApi';
@@ -11,6 +11,14 @@ import OpenNoteButton from './OpenNoteButton';
 import { formatDateTime } from '../../utils/format';
 import { PLATFORM_LABEL } from '../../utils/constants';
 import type { Work } from '../../types/api.d';
+import { safeHttpUrl } from '../../utils/urls';
+
+const ARCHIVE_CHECK_LABEL: Record<string, string> = {
+  verified: '已核实',
+  needs_review: '待核实',
+  conflict: '存在冲突',
+  failed: '核对失败',
+};
 
 interface WorkListItemProps {
   work: Work;
@@ -22,6 +30,13 @@ export default function WorkListItem({ work, onChanged }: WorkListItemProps) {
   const [retryError, setRetryError] = useState<string | null>(null);
   const [coverError, setCoverError] = useState(false);
   const retryMutation = useMutation((id: number) => retryWork(id));
+  const safeUrl = safeHttpUrl(work.url);
+  const archiveCheckStatus = (work as Work & { archive_check_status?: string | null }).archive_check_status;
+  const downloadedLabel = work.download_time_source === 'not_required'
+    ? '无需媒体下载'
+    : work.downloaded_at
+      ? `${formatDateTime(work.downloaded_at)}（来源 ${work.download_time_source ?? '未知'}）`
+      : '下载时间未知';
 
   const handleRetry = async () => {
     setRetryError(null);
@@ -62,8 +77,9 @@ export default function WorkListItem({ work, onChanged }: WorkListItemProps) {
         </div>
 
         <p className="mt-1 text-xs text-ink-muted">
-          发布于 {formatDateTime(work.published_at)} · 平台 {PLATFORM_LABEL[work.platform] ?? work.platform}
+          发布时间（北京时间）{formatDateTime(work.published_at)} · 下载完成时间（北京时间）{downloadedLabel} · 平台 {PLATFORM_LABEL[work.platform] ?? work.platform}
           {work.frame_count > 0 ? ` · 关键帧 ${work.frame_count}` : ''}
+          {archiveCheckStatus ? ` · 归档核对 ${ARCHIVE_CHECK_LABEL[archiveCheckStatus] ?? archiveCheckStatus}` : ''}
         </p>
 
         <div className="mt-2 flex flex-wrap items-center gap-2">
@@ -80,19 +96,25 @@ export default function WorkListItem({ work, onChanged }: WorkListItemProps) {
               重试
             </button>
           ) : null}
-          {work.note_path ? (
-            <OpenNoteButton notePath={work.note_path} />
-          ) : (
+          <Link
+            to={`/archive?work_id=${work.id}`}
+            className="inline-flex items-center gap-1.5 rounded-md border border-line px-2 py-1 text-xs text-ink-secondary transition-colors hover:bg-sidebar"
+          >
+            <Archive className="h-3.5 w-3.5" />归档记录
+          </Link>
+          {safeUrl ? (
             <a
-              href={work.url}
+              href={safeUrl}
               target="_blank"
               rel="noreferrer"
               className="inline-flex items-center gap-1.5 rounded-md border border-line px-2 py-1 text-xs text-ink-secondary transition-colors hover:bg-sidebar"
             >
-              <ExternalLink className="h-3.5 w-3.5" />
-              原作品
+              <ExternalLink className="h-3.5 w-3.5" />原作品
             </a>
-          )}
+          ) : null}
+          {work.note_path ? (
+            <OpenNoteButton notePath={work.note_path} />
+          ) : null}
         </div>
 
         {retryError ? <p className="mt-1 text-xs text-danger">{retryError}</p> : null}

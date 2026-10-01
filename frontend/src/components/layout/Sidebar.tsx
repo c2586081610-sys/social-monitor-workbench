@@ -2,6 +2,7 @@
 import { NavLink } from 'react-router-dom';
 import {
   Folder,
+  Archive,
   Inbox,
   Library,
   Settings,
@@ -22,6 +23,7 @@ const NAV_ITEMS: NavItem[] = [
   { to: '/groups', label: '分组管理', icon: Folder },
   { to: '/tags', label: '标签检索', icon: Tags },
   { to: '/unclassified', label: '待分类', icon: Inbox },
+  { to: '/archive', label: '本地归档', icon: Archive },
   { to: '/lexicon', label: '词库管理', icon: Library },
   { to: '/settings', label: '设置', icon: Settings },
 ];
