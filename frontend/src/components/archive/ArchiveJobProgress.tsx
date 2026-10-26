@@ -12,11 +12,17 @@ const STATUS_LABEL: Record<ArchiveJob['status'], string> = {
 
 const STAT_LABEL: Record<string, string> = {
   directories_total: '目录总数',
+  total_directories: '目录总数',
   directories_scanned: '已扫描目录',
+  failed_directories: '失败目录',
   scanned: '已扫描',
   processed: '已处理',
   entries: '归档条目',
   indexed: '已索引',
+  updated: '已更新',
+  unknown: '信息待补',
+  conflict: '冲突',
+  attempts: '尝试次数',
   verified: '已核实',
   needs_review: '待核实',
   conflicts: '冲突',

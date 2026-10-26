@@ -4,10 +4,12 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.errors import conflict, not_found
+from app.models import ArchiveEntry
 from app.repositories import task_repo, work_repo
 from app.schemas.work import TaskStage, Work, WorkDetail, WorkPage
 from app.utils.manifest import frame_count, manifest_items, read_manifest
@@ -23,8 +25,30 @@ def _abs_media(path: str | None) -> str | None:
     return f"{base}{path}"
 
 
-def _serialize_work(work) -> Work:
+_ARCHIVE_STATUS_PRIORITY = {"verified": 1, "needs_review": 2, "failed": 3, "conflict": 4}
+
+
+def _archive_statuses(db: Session, work_ids: list[int]) -> dict[int, str]:
+    """Read all linked physical-entry states in one query for a result page."""
+    ids = sorted({work_id for work_id in work_ids if isinstance(work_id, int) and work_id > 0})
+    if not ids:
+        return {}
+    rows = db.execute(
+        select(ArchiveEntry.work_id, ArchiveEntry.check_status).where(ArchiveEntry.work_id.in_(ids))
+    ).all()
+    statuses: dict[int, str] = {}
+    for work_id, status in rows:
+        if status not in _ARCHIVE_STATUS_PRIORITY:
+            continue
+        current = statuses.get(work_id)
+        if current is None or _ARCHIVE_STATUS_PRIORITY[status] > _ARCHIVE_STATUS_PRIORITY[current]:
+            statuses[work_id] = status
+    return statuses
+
+
+def _serialize_work(work, archive_check_status: str | None = None) -> Work:
     data = Work.model_validate(work).model_dump()
+    data["archive_check_status"] = archive_check_status
     data["frame_count"] = frame_count(settings.media_root, work.frame_manifest_path)
     data["cover_url"] = _abs_media(data.get("cover_url"))
     return Work(**data)
@@ -67,8 +91,9 @@ class WorkService:
             page=page,
             limit=limit,
         )
+        statuses = _archive_statuses(db, [work.id for work in items])
         return WorkPage(
-            items=[_serialize_work(w) for w in items],
+            items=[_serialize_work(w, statuses.get(w.id)) for w in items],
             total=total,
             page=page,
             limit=limit,
@@ -77,8 +102,9 @@ class WorkService:
 
     def unclassified(self, db: Session, page: int, limit: int) -> WorkPage:
         items, total = work_repo.list_unclassified(db, page=page, limit=limit)
+        statuses = _archive_statuses(db, [work.id for work in items])
         return WorkPage(
-            items=[_serialize_work(w) for w in items],
+            items=[_serialize_work(w, statuses.get(w.id)) for w in items],
             total=total,
             page=page,
             limit=limit,
@@ -89,8 +115,9 @@ class WorkService:
         if not _creator_exists(db, creator_id):
             raise not_found("CREATOR_NOT_FOUND")
         items, total = work_repo.list_by_creator(db, creator_id, page=page, limit=limit)
+        statuses = _archive_statuses(db, [work.id for work in items])
         return WorkPage(
-            items=[_serialize_work(w) for w in items],
+            items=[_serialize_work(w, statuses.get(w.id)) for w in items],
             total=total,
             page=page,
             limit=limit,
@@ -101,7 +128,8 @@ class WorkService:
         work = work_repo.get(db, work_id)
         if work is None:
             raise not_found("WORK_NOT_FOUND")
-        base = _serialize_work(work).model_dump()
+        archive_status = _archive_statuses(db, [work.id]).get(work.id)
+        base = _serialize_work(work, archive_status).model_dump()
         base["tags"] = [{"id": t.id, "name": t.name, "kind": t.kind} for t in work.tags]
         base["stages"] = [
             TaskStage.model_validate(t).model_dump() for t in task_repo.list_by_work(db, work_id)
@@ -175,7 +203,8 @@ class WorkService:
         )
         task_repo.upsert(db, work.id, "download", "pending", attempts=0)
         db.commit()
-        return _serialize_work(work)
+        archive_status = _archive_statuses(db, [work.id]).get(work.id)
+        return _serialize_work(work, archive_status)
 
     def frames(self, db: Session, work_id: int) -> dict:
         work = work_repo.get(db, work_id)

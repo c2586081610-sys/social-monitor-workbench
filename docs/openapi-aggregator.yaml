@@ -1303,6 +1303,11 @@ components:
         published_at: { type: string, format: date-time, nullable: true }
         downloaded_at: { type: string, format: date-time, nullable: true }
         download_time_source: { type: string, nullable: true }
+        archive_check_status:
+          type: string
+          nullable: true
+          enum: [verified, needs_review, conflict, failed]
+          description: 多个物理归档按冲突、失败、待核验、已核验优先级汇总
         source_type: { $ref: '#/components/schemas/SourceType' }
         status: { $ref: '#/components/schemas/WorkStatus' }
         task_id: { type: string, nullable: true }
@@ -1323,6 +1328,11 @@ components:
         published_at: { type: string, format: date-time, nullable: true }
         downloaded_at: { type: string, format: date-time, nullable: true }
         download_time_source: { type: string, nullable: true }
+        archive_check_status:
+          type: string
+          nullable: true
+          enum: [verified, needs_review, conflict, failed]
+          description: 多个物理归档按冲突、失败、待核验、已核验优先级汇总
 
     WorkDetail:
       allOf:

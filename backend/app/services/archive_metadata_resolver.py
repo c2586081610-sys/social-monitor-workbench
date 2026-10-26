@@ -110,12 +110,16 @@ class ArchiveMetadataResolution:
         result = {
             "title": self.title.value,
             "title_source": self.title.source,
+            "title_verified": self.title.verified,
             "owner_id": self.owner_id.value,
             "owner_id_source": self.owner_id.source,
+            "owner_id_verified": self.owner_id.verified,
             "owner_name": self.owner_name.value,
             "owner_name_source": self.owner_name.source,
+            "owner_name_verified": self.owner_name.verified,
             "duration_seconds": self.duration_seconds.value,
             "duration_source": self.duration_seconds.source,
+            "duration_verified": self.duration_seconds.verified,
             "published_at": self.published_at.value,
             "published_time_source": self.published_at.source,
             "published_time_precision": self.published_at.precision,
@@ -295,7 +299,10 @@ def _timestamp_seconds(value: Any) -> str | None:
         timestamp = int(value)
         if timestamp <= 0:
             return None
-        return datetime.fromtimestamp(timestamp, timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+        parsed = datetime.fromtimestamp(timestamp, timezone.utc)
+        if parsed.year <= 1970:
+            return None
+        return parsed.isoformat(timespec="seconds").replace("+00:00", "Z")
     except (TypeError, ValueError, OverflowError, OSError):
         return None
 
@@ -533,13 +540,27 @@ def _collector_field_values(platform: str, source_context: Mapping[str, Any]) ->
     title = payload.get("title")
     if isinstance(title, str) and title.strip():
         values["title"] = ResolvedField(title.strip(), source, None, True)
-    timezone_hint = payload.get("published_timezone", source_context.get("timezone"))
+    timezone_hint = payload.get(
+        "published_time_timezone",
+        payload.get(
+            "published_timezone",
+            source_context.get("published_time_timezone", source_context.get("published_timezone", source_context.get("timezone"))),
+        ),
+    )
     if not isinstance(timezone_hint, str):
         timezone_hint = None
     publication = _datetime_value(payload.get("published_at"), timezone_hint)
     if publication is not None:
         normalized, precision, source_timezone = publication
-        values["published_at"] = ResolvedField(normalized, source, precision, True, source_timezone)
+        declared_precision = payload.get("published_time_precision")
+        if declared_precision in {"day", "minute", "second"}:
+            precision = declared_precision
+        publication_source = payload.get("published_time_source")
+        if not isinstance(publication_source, str) or not publication_source.strip():
+            publication_source = source
+        values["published_at"] = ResolvedField(
+            normalized, publication_source.strip(), precision, True, source_timezone
+        )
     owner_id = payload.get("owner_id", payload.get("mid", payload.get("author_id")))
     if isinstance(owner_id, (str, int)) and not isinstance(owner_id, bool) and str(owner_id).strip():
         values["owner_id"] = ResolvedField(str(owner_id).strip(), source, None, True)
@@ -924,7 +945,13 @@ def resolve_archive_metadata(
         except (ValueError, TypeError):
             issues.append("bilibili_identity_invalid")
 
-    if collector_valid or detail_succeeded:
+    if collector_valid:
+        payload = _collector_payload(source_context or {}) or {}
+        observed_check = source_context.get("metadata_checked_at") or payload.get("metadata_checked_at")
+        parsed_check = _datetime_value(observed_check, "UTC")
+        if parsed_check is not None:
+            check_time = parsed_check[0]
+    if detail_succeeded:
         check_time = _now_utc()
     if conflicts:
         status: ArchiveCheckStatus = "conflict"

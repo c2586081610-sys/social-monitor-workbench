@@ -72,6 +72,12 @@ def init_db() -> None:
         _ensure_column(conn, "works", "cover_url", "TEXT")
         _ensure_column(conn, "works", "downloaded_at", "TEXT")
         _ensure_column(conn, "works", "download_time_source", "TEXT")
+        # Archive Task 3: nullable publication provenance for future collector
+        # responses; old rows intentionally remain unknown.
+        _ensure_column(conn, "works", "published_time_source", "TEXT")
+        _ensure_column(conn, "works", "published_time_precision", "VARCHAR(20)")
+        _ensure_column(conn, "works", "published_time_timezone", "VARCHAR(64)")
+        _ensure_column(conn, "works", "metadata_checked_at", "TEXT")
 
     with SessionLocal() as db:
         from app.repositories.health_repo import upsert_cookie

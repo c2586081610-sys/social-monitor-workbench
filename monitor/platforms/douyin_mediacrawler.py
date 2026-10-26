@@ -16,6 +16,7 @@ import logging
 import os
 import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 logger = logging.getLogger("monitor.douyin_mediacrawler")
@@ -80,4 +81,16 @@ class DouyinMediaCrawlerAdapter:
         if isinstance(data, dict) and data.get("error"):
             logger.warning("douyin 抓取 error: %s", data["error"])
             return []
-        return data if isinstance(data, list) else []
+        if not isinstance(data, list):
+            return []
+        checked_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        for item in data:
+            if not isinstance(item, dict):
+                continue
+            item["metadata_checked_at"] = checked_at
+            published_at = item.get("published_at")
+            if isinstance(published_at, str) and published_at:
+                item["published_time_source"] = "douyin_mediacrawler_create_time"
+                item["published_time_precision"] = "second"
+                item["published_time_timezone"] = "UTC"
+        return data

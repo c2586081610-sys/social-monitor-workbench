@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.schemas.archive import ArchiveCheckStatus
 from app.schemas.common import SourceType, WorkStatus
 
 
@@ -15,6 +16,7 @@ class WorkSummary(BaseModel):
     published_at: str | None
     downloaded_at: str | None = None
     download_time_source: str | None = None
+    archive_check_status: ArchiveCheckStatus | None = None
 
 
 class Work(BaseModel):
@@ -30,6 +32,7 @@ class Work(BaseModel):
     published_at: str | None
     downloaded_at: str | None
     download_time_source: str | None
+    archive_check_status: ArchiveCheckStatus | None = None
     source_type: SourceType
     status: WorkStatus
     task_id: str | None

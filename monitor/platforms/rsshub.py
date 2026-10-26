@@ -8,6 +8,8 @@ import html
 import logging
 import re
 from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import feedparser
 import httpx
@@ -37,14 +39,59 @@ def _clean_title(raw: str) -> str:
     return " ".join(raw.replace("\n", " ").split())[:200]
 
 
-def _iso_from_feed(entry) -> str | None:
-    parsed = getattr(entry, "published_parsed", None) or getattr(entry, "updated_parsed", None)
-    if not parsed:
+def _publication_from_feed(entry) -> dict[str, str] | None:
+    """Read only the source's publication field and retain its stated precision."""
+    raw = entry.get("published")
+    if not isinstance(raw, str) or not raw.strip():
         return None
+    raw = raw.strip()
+    timezone_hint = entry.get("published_timezone") or entry.get("timezone")
+    is_date_only = bool(re.fullmatch(r"\d{4}-\d{2}-\d{2}", raw))
     try:
-        return datetime(*parsed[:6], tzinfo=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    except (ValueError, TypeError):
+        if is_date_only:
+            if not isinstance(timezone_hint, str) or not timezone_hint.strip():
+                return None
+            source_zone = ZoneInfo(timezone_hint.strip())
+            parsed = datetime.fromisoformat(raw).replace(tzinfo=source_zone)
+            precision = "day"
+            source_timezone = timezone_hint.strip()
+        elif "T" in raw or re.match(r"^\d{4}-\d{2}-\d{2} ", raw):
+            parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+            if parsed.tzinfo is None or parsed.utcoffset() is None:
+                return None
+            source_timezone = _feed_timezone_label(parsed, timezone_hint)
+            clock = re.split(r"[+-]|Z$", raw.split("T", 1)[-1], maxsplit=1)[0]
+            precision = "second" if len(clock.split(":")) >= 3 else "minute"
+        else:
+            parsed = parsedate_to_datetime(raw)
+            if parsed.tzinfo is None or parsed.utcoffset() is None:
+                return None
+            source_timezone = _feed_timezone_label(parsed, timezone_hint)
+            precision = "second" if re.search(r"\b\d{1,2}:\d{2}:\d{2}\b", raw) else "minute"
+    except (TypeError, ValueError, OverflowError, ZoneInfoNotFoundError):
         return None
+    if parsed.year <= 1970:
+        return None
+    normalized = parsed.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return {
+        "published_at": normalized,
+        "published_time_source": "rsshub_published",
+        "published_time_precision": precision,
+        "published_time_timezone": source_timezone,
+    }
+
+
+def _feed_timezone_label(parsed: datetime, hint: object) -> str:
+    if isinstance(hint, str) and hint.strip():
+        try:
+            ZoneInfo(hint.strip())
+            return hint.strip()
+        except ZoneInfoNotFoundError:
+            pass
+    offset = parsed.utcoffset()
+    if offset is not None and offset.total_seconds() == 8 * 60 * 60:
+        return "Asia/Shanghai"
+    return "UTC"
 
 
 class RSSHubRouterAdapter:
@@ -78,10 +125,12 @@ class RSSHubRouterAdapter:
         if resp.status_code >= 400:
             raise RSSHubError("route", f"路由失效 HTTP {resp.status_code}")
         feed = feedparser.parse(resp.text)
+        checked_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         entries = []
         for entry in feed.entries:
             item = self._to_work(platform, entry)
             if item:
+                item["metadata_checked_at"] = checked_at
                 entries.append(item)
         return entries
 
@@ -95,8 +144,11 @@ class RSSHubRouterAdapter:
             "external_id": external_id,
             "title": _clean_title(entry.get("title", "")),
             "url": entry.get("link", ""),
-            "published_at": _iso_from_feed(entry),
         }
+        publication = _publication_from_feed(entry)
+        if publication:
+            publication["published_time_source"] = f"rsshub_{platform}_published"
+            item.update(publication)
         # v0.4：解析推文正文媒体，供图文/视频分流（twitter 特有；其他平台保持原样）
         if platform == "twitter":
             content_type, image_urls = RSSHubRouterAdapter._parse_twitter_media(entry)

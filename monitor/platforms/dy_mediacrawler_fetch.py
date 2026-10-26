@@ -17,8 +17,14 @@ os.chdir(_MC_DIR)  # MediaCrawler help.py 相对路径读 libs/*.js
 
 def _iso(ts) -> str | None:
     try:
-        return datetime.fromtimestamp(int(ts), tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    except (TypeError, ValueError):
+        timestamp = int(ts)
+        if timestamp <= 0:
+            return None
+        published = datetime.fromtimestamp(timestamp, tz=timezone.utc)
+        if published.year <= 1970:
+            return None
+        return published.strftime("%Y-%m-%dT%H:%M:%SZ")
+    except (TypeError, ValueError, OverflowError, OSError):
         return None
 
 

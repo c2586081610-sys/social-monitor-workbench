@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.errors import not_found, validation
 from app.repositories import task_repo, work_repo
+from app.services.archive_metadata_resolver import resolve_archive_metadata
 from app.schemas.link_analysis import LinkAnalysisCreate, LinkAnalysisResult
 from app.schemas.work import Work as WorkSchema
 
@@ -41,23 +42,34 @@ def _resolve_short_link(url: str) -> str:
 def parse_link_identity(
     url: str, resolve_redirect: Callable[[str], str] | None = None
 ) -> LinkIdentity:
-    parsed = urlsplit(url.strip())
+    try:
+        parsed = urlsplit(url.strip())
+        port = parsed.port
+    except (AttributeError, TypeError, ValueError):
+        raise validation("LINK_IDENTITY_UNSUPPORTED") from None
     host = parsed.hostname.lower() if parsed.hostname else ""
     path = parsed.path
+    if (
+        parsed.scheme.lower() not in {"http", "https"}
+        or parsed.username is not None
+        or parsed.password is not None
+        or port not in (None, 80, 443)
+    ):
+        raise validation("LINK_IDENTITY_UNSUPPORTED")
 
     if host in _SHORT_LINK_HOSTS:
         resolved = resolve_redirect(url) if resolve_redirect else _resolve_short_link(url)
         return parse_link_identity(resolved)
 
-    if host.endswith("bilibili.com"):
+    if host == "bilibili.com" or host.endswith(".bilibili.com"):
         match = _BILIBILI_ID.search(path)
         if match:
             return LinkIdentity("bilibili", match.group(1))
-    elif host.endswith("douyin.com"):
+    elif host == "douyin.com" or host.endswith(".douyin.com"):
         match = _DOUYIN_ID.search(path)
         if match:
             return LinkIdentity("douyin", match.group(1))
-    elif host.endswith("xiaohongshu.com"):
+    elif host == "xiaohongshu.com" or host.endswith(".xiaohongshu.com"):
         match = _XHS_ID.search(path)
         if match:
             return LinkIdentity("xhs", match.group(1))
@@ -92,6 +104,21 @@ class LinkAnalysisService:
             content_type="video",
             status="QUEUED",
         )
+        if identity.platform == "bilibili":
+            resolution = resolve_archive_metadata(
+                work,
+                query_bilibili_detail=True,
+            )
+            if resolution.title.verified and "title" not in resolution.conflicts and resolution.title.value:
+                work.title = str(resolution.title.value)
+            publication = resolution.published_at
+            if publication.verified and "published_at" not in resolution.conflicts and publication.value:
+                work.published_at = str(publication.value)
+                work.published_time_source = publication.source
+                work.published_time_precision = publication.precision
+                work.published_time_timezone = publication.source_timezone
+            if resolution.metadata_checked_at:
+                work.metadata_checked_at = resolution.metadata_checked_at
         for stage in ("parse", "download", "transcribe", "frames", "note"):
             task_repo.upsert(db, work.id, stage, "pending", attempts=0)
         db.commit()

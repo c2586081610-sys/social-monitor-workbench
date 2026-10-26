@@ -9,10 +9,11 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.api import creators, groups, health, lexicon, link_analyses, monitor, tags, unclassified, wechat, works
+from app.api import archive, creators, groups, health, lexicon, link_analyses, monitor, tags, unclassified, wechat, works
 from app.core.config import settings
 from app.core.db import init_db
 from app.core.errors import AppError
+from app.services.archive_worker import archive_worker
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 logger = logging.getLogger("aggregator")
@@ -22,7 +23,11 @@ logger = logging.getLogger("aggregator")
 async def lifespan(_app: FastAPI):
     """应用生命周期：启动时建表 + 幂等迁移（替代 FastAPI on_event，消除弃用警告）。"""
     init_db()
-    yield
+    archive_worker.start()
+    try:
+        yield
+    finally:
+        archive_worker.stop()
 
 
 app = FastAPI(
@@ -82,6 +87,7 @@ app.mount("/media", StaticFiles(directory=str(settings.media_root)), name="media
 
 
 app.include_router(creators.router)
+app.include_router(archive.router)
 app.include_router(works.router)
 app.include_router(link_analyses.router)
 app.include_router(groups.router)

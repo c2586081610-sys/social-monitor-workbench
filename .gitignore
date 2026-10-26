@@ -21,6 +21,19 @@ workbuddy/triggers/
 workbuddy/monitor_heartbeat.json
 workbuddy/onetime_poll.log
 
+# 本地历史母库、私有配置与归档运行报告
+/健身/
+/config/
+/archive-reports/
+/logs/
+/全部作品信息.csv
+/合集清单.csv
+/归档总清单.csv
+/tools/_tmp_*
+*.db-wal
+*.db-shm
+*.db-journal
+
 # 依赖与构建
 node_modules/
 dist/

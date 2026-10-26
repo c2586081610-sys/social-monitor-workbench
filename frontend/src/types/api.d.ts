@@ -90,6 +90,7 @@ export interface Work {
   published_at: string | null;
   downloaded_at: string | null;
   download_time_source: string | null;
+  archive_check_status?: ArchiveCheckStatus | null;
   source_type: SourceType;
   status: WorkStatus;
   task_id: string | null;
@@ -111,6 +112,7 @@ export interface WorkSummary {
   published_at: string | null;
   downloaded_at?: string | null;
   download_time_source?: string | null;
+  archive_check_status?: ArchiveCheckStatus | null;
   /** 笔记已完成标记：note_path 存在 = 笔记已生成（后端 recent_works 当前未返回该字段，预留可选）。 */
   note_path?: string | null;
 }

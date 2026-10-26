@@ -5,7 +5,10 @@ import json
 import logging
 import os
 import time
+from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -13,10 +16,21 @@ from sqlalchemy.orm import Session
 # 先导入 shared_db（把 backend 加入 sys.path），再导入 app.* 与 monitor.*
 from monitor.store.shared_db import SessionLocal, settings  # noqa: E402
 
-from app.models import Creator, Work  # noqa: E402
+from app.models import ArchiveEntry, Creator, Work  # noqa: E402
 from app.repositories import health_repo, lexicon_repo, task_repo, work_repo  # noqa: E402
-from app.utils.filename import sanitize_filename  # noqa: E402
-from app.utils.timeutil import now_iso, to_date  # noqa: E402
+from app.repositories import archive_repo  # noqa: E402
+from app.services.archive_checkpoint_service import (  # noqa: E402
+    archive_metadata_seed,
+    assert_work_archive_identity,
+    publication_provenance_from_work,
+    record_download_checkpoint,
+    register_legacy_media,
+    resolve_work_directory,
+)
+from app.services.archive_metadata_resolver import resolve_archive_metadata  # noqa: E402
+from app.services.archive_sync_service import sync_archive_entry  # noqa: E402
+from app.utils.archive_paths import relative_path_from_root, resolve_archive_path  # noqa: E402
+from app.utils.timeutil import now_iso  # noqa: E402
 
 from monitor.pipeline import download, frames, notify, transcribe  # noqa: E402
 from monitor.pipeline.download import PipelineOfflineError  # noqa: E402
@@ -28,6 +42,45 @@ from monitor.platforms.xhs_mediacrawler import XhsMediacrawlerAdapter  # noqa: E
 logger = logging.getLogger("monitor.jobs")
 
 RSSHUB_PLATFORMS = ("bilibili", "twitter")
+
+
+def _producer_time_fields(item: dict) -> dict:
+    """Accept only publication fields that name a real source and precision."""
+    fields = {}
+    raw = item.get("published_at")
+    source = item.get("published_time_source")
+    precision = item.get("published_time_precision")
+    source_timezone = item.get("published_time_timezone")
+    if isinstance(raw, str) and raw and isinstance(source, str) and source.strip() and precision in {"day", "minute", "second"}:
+        try:
+            parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+            if parsed.year > 1970:
+                if parsed.tzinfo is None or parsed.utcoffset() is None:
+                    if precision != "day" or not isinstance(source_timezone, str):
+                        raise ValueError("publication source timezone missing")
+                    parsed = parsed.replace(tzinfo=ZoneInfo(source_timezone))
+                if not isinstance(source_timezone, str) or not source_timezone.strip():
+                    source_timezone = "UTC"
+                else:
+                    ZoneInfo(source_timezone)
+                fields.update({
+                    "published_at": raw,
+                    "published_time_source": source.strip(),
+                    "published_time_precision": precision,
+                    "published_time_timezone": source_timezone,
+                })
+        except (ValueError, TypeError, ZoneInfoNotFoundError, OverflowError, OSError):
+            pass
+
+    checked_at = item.get("metadata_checked_at")
+    if isinstance(checked_at, str) and checked_at:
+        try:
+            checked = datetime.fromisoformat(checked_at.replace("Z", "+00:00"))
+            if checked.year > 1970 and checked.tzinfo is not None and checked.utcoffset() is not None:
+                fields["metadata_checked_at"] = checked.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        except (ValueError, TypeError, OverflowError, OSError):
+            pass
+    return fields
 
 
 def write_heartbeat() -> None:
@@ -47,18 +100,23 @@ def _upsert_creator_entries(db: Session, creator: Creator, entries: list[dict]) 
     new_count = 0
     for item in entries:
         media_urls = item.get("media_urls")
+        fields = {
+            "title": item["title"],
+            "url": item["url"],
+            "creator_id": creator.id,
+            "source_type": "monitor",
+            "content_type": item.get("content_type", "video"),
+        }
+        fields.update(_producer_time_fields(item))
+        if isinstance(media_urls, list):
+            fields["media_urls"] = json.dumps(media_urls, ensure_ascii=False)
+        if "cover_url" in item:
+            fields["cover_url"] = item.get("cover_url")
         work = work_repo.upsert(
             db,
             item["platform"],
             item["external_id"],
-            title=item["title"],
-            url=item["url"],
-            published_at=item.get("published_at"),
-            creator_id=creator.id,
-            source_type="monitor",
-            content_type=item.get("content_type", "video"),
-            media_urls=json.dumps(media_urls, ensure_ascii=False) if media_urls else None,
-            cover_url=item.get("cover_url"),
+            **fields,
         )
         if work.status == "NEW":
             new_count += 1
@@ -265,13 +323,213 @@ def consume_triggers() -> None:
         path.unlink(missing_ok=True)
 
 
-def _work_media_dir(work) -> Path:
-    """计算媒体目录 media/{分组}/{博主}/{日期}-{标题}/（SPEC §8 命名规则）。"""
-    group = work.group.name if work.group else "未分组"
-    creator = work.creator.name if work.creator else work.external_id
-    date = to_date(work.published_at) or to_date(work.created_at) or "unknown"
-    rel = Path(sanitize_filename(group)) / sanitize_filename(creator) / f"{date}-{sanitize_filename(work.title)}"
-    return settings.media_root / rel
+def _existing_archive_entry(db: Session, work: Work):
+    entries = [entry for entry in archive_repo.list_by_work(db, work.id) if entry.root_key == "media"]
+    if work.media_path:
+        relative = relative_path_from_root("media", str(work.media_path))
+        entry = archive_repo.get_entry_by_path(db, "media", relative)
+        if entry is not None and entry.platform == work.platform and str(entry.external_id or "") == str(work.external_id):
+            return entry
+        return None
+    entries = [
+        entry for entry in entries
+        if entry.platform == work.platform and str(entry.external_id or "") == str(work.external_id)
+    ]
+    if not entries:
+        return None
+    return next((entry for entry in entries if entry.check_status == "verified"), entries[0])
+
+
+def _resolve_work_metadata(db: Session, work: Work):
+    """Resolve stored and available publisher evidence before choosing a new path."""
+    existing_entry = _existing_archive_entry(db, work)
+    seed = archive_metadata_seed(work, existing_entry)
+    stored_source = seed.get("published_time_source")
+    stored_precision = seed.get("published_time_precision")
+    already_detailed = stored_source == "bilibili_view_api" and stored_precision == "second"
+    resolution = resolve_archive_metadata(
+        work,
+        existing_metadata=seed,
+        query_bilibili_detail=(work.platform == "bilibili" and not already_detailed),
+    )
+    if resolution.title.verified and "title" not in resolution.conflicts and resolution.title.value:
+        work.title = str(resolution.title.value)
+    publication = resolution.published_at
+    if publication.verified and "published_at" not in resolution.conflicts and publication.value:
+        work.published_at = str(publication.value)
+        work.published_time_source = publication.source
+        work.published_time_precision = publication.precision
+        if publication.source_timezone:
+            work.published_time_timezone = publication.source_timezone
+        elif publication.precision == "second":
+            work.published_time_timezone = "UTC"
+    if resolution.metadata_checked_at:
+        work.metadata_checked_at = resolution.metadata_checked_at
+    return resolution, existing_entry
+
+
+def _work_media_dir(work, publication_provenance=None, existing_entry=None) -> Path:
+    """Resolve the stored physical directory or build a stable new archive name."""
+    _relative, path = resolve_work_directory(
+        work,
+        root_key="media",
+        publication_provenance=publication_provenance,
+        existing_entry=existing_entry,
+    )
+    return path
+
+
+def _registered_files_for_adapter(entry, relative_directory: str, *, images_only: bool = False) -> list[dict]:
+    registered = []
+    for item in entry.files_json or []:
+        if not isinstance(item, dict):
+            continue
+        relative = item.get("relative_path")
+        if not isinstance(relative, str):
+            continue
+        relative = relative.replace("\\", "/")
+        prefix = relative_directory.rstrip("/") + "/"
+        if not os.path.normcase(relative).startswith(os.path.normcase(prefix)):
+            raise ValueError("registered media leaves its work directory")
+        work_relative = relative[len(prefix):]
+        if images_only and not os.path.normcase(work_relative).startswith(os.path.normcase("images/")):
+            raise ValueError("image work conflicts with a non-image media registration")
+        absolute = resolve_archive_path("media", relative)
+        registered.append({
+            "path": str(absolute),
+            "size_bytes": item.get("size_bytes"),
+            "media_type": item.get("media_type"),
+            "sha256": item.get("sha256"),
+        })
+    return registered
+
+
+def _sync_checkpoint_after_commit(entry_id: int, work_id: int) -> None:
+    try:
+        sync_archive_entry(entry_id)
+    except Exception as exc:  # noqa: BLE001 - the durable pending job retries it
+        logger.warning("archive sidecar sync deferred work_id=%s error_type=%s", work_id, type(exc).__name__)
+
+
+def _pipeline_error_message(exc: Exception) -> str:
+    if isinstance(exc, PipelineOfflineError):
+        return str(exc)
+    try:
+        from monitor.pipeline.twitter_image import TwitterImageError
+
+        if isinstance(exc, TwitterImageError):
+            return str(exc)
+    except ImportError:
+        pass
+    return f"download checkpoint failed ({type(exc).__name__})"
+
+
+@dataclass(frozen=True)
+class _DownloadCheckpoint:
+    media_dir: Path
+    result: object
+    manifest_path: Path | None = None
+
+
+def download_and_checkpoint(db: Session, work: Work) -> _DownloadCheckpoint:
+    """Download/reuse, persist Work + ArchiveEntry + sync job, then sync sidecars.
+
+    The checkpoint commit occurs before the independent sync call. Callers may
+    safely begin transcription only after this function returns.
+    """
+    resolution, existing_entry = _resolve_work_metadata(db, work)
+    publication = resolution.publication_provenance() or publication_provenance_from_work(work)
+    source_context = resolution.as_metadata()
+    # Keep newly checked publication evidence even when the later downloader
+    # fails; a cached Work value is never passed back as a fresh collector.
+    db.commit()
+
+    relative_directory, media_dir = resolve_work_directory(
+        work,
+        root_key="media",
+        publication_provenance=publication,
+        existing_entry=existing_entry,
+    )
+    registered_entry = archive_repo.get_entry_by_path(db, "media", relative_directory)
+    assert_work_archive_identity(db, registered_entry, work)
+
+    try:
+        legacy = register_legacy_media(
+            db,
+            work,
+            root_key="media",
+            publication_provenance=publication,
+            source_context=source_context,
+        )
+        if legacy is not None:
+            db.commit()
+            _sync_checkpoint_after_commit(legacy.archive_entry_id, work.id)
+            registered_entry = db.get(ArchiveEntry, legacy.archive_entry_id)
+            registered_files = list(legacy.files)
+        else:
+            registered_entry = archive_repo.get_entry_by_path(db, "media", relative_directory)
+            assert_work_archive_identity(db, registered_entry, work)
+            registered_files = (
+                _registered_files_for_adapter(
+                    registered_entry,
+                    relative_directory,
+                    images_only=(str(work.content_type or "").lower() in {"image", "text"}),
+                )
+                if registered_entry is not None else []
+            )
+
+        work.status = "DOWNLOADING"
+        prior_task = task_repo.get_by_work_stage(db, work.id, "download")
+        attempts = (prior_task.attempts if prior_task is not None else 0) + 1
+        task = task_repo.upsert(db, work.id, "download", "running", attempts=attempts)
+        task.error = None
+        db.commit()
+
+        manifest_path = None
+        content_type = str(work.content_type or "video").lower()
+        if content_type == "video":
+            result = download.download_with_result(
+                work.platform,
+                work.url,
+                media_dir,
+                registered_files=registered_files,
+            )
+            download_source = f"monitor.pipeline.download:{work.platform}"
+        else:
+            from monitor.pipeline import twitter_image
+
+            images_dir = media_dir / "images"
+            manifest_path, result = twitter_image.download_images_with_result(
+                work,
+                images_dir,
+                registered_files=registered_files,
+            )
+            download_source = "monitor.pipeline.twitter_image"
+            work.frame_manifest_path = relative_path_from_root("media", str(manifest_path))
+
+        entry_id = record_download_checkpoint(
+            db,
+            work,
+            result,
+            root_key="media",
+            download_source=download_source,
+            publication_provenance=publication,
+            source_context=source_context,
+        )
+        task_repo.upsert(db, work.id, "download", "succeeded", attempts=attempts)
+        work.last_error = None
+        db.commit()
+        _sync_checkpoint_after_commit(entry_id, work.id)
+        return _DownloadCheckpoint(media_dir=media_dir, result=result, manifest_path=manifest_path)
+    except Exception as exc:  # noqa: BLE001 - preserve safe failure state and leave no receipt
+        safe_message = _pipeline_error_message(exc)
+        work.status = "FAILED"
+        work.last_error = safe_message
+        task_repo.mark_failed(db, work.id, "download", safe_message)
+        db.commit()
+        if isinstance(exc, PipelineOfflineError):
+            raise
+        raise PipelineOfflineError(safe_message) from None
 
 
 def process_link_analysis(work_id: int) -> dict[str, str | int]:
@@ -290,15 +548,17 @@ def process_link_analysis(work_id: int) -> dict[str, str | int]:
             _process_work(db, work, write_pending=False)
             db.commit()
         except PipelineOfflineError as exc:
+            failed_stage = "transcribe" if work.status == "TRANSCRIBING" else "download"
             work.status = "FAILED"
             work.last_error = str(exc)
-            task_repo.mark_failed(db, work.id, "download", str(exc))
+            task_repo.mark_failed(db, work.id, failed_stage, str(exc))
             db.commit()
             logger.warning("link analysis %s pipeline offline: %s", work.id, exc)
         except Exception as exc:  # noqa: BLE001
+            failed_stage = "transcribe" if work.status == "TRANSCRIBING" else "pipeline"
             work.status = "FAILED"
             work.last_error = str(exc)
-            task_repo.mark_failed(db, work.id, "download", str(exc))
+            task_repo.mark_failed(db, work.id, failed_stage, str(exc))
             db.commit()
             logger.exception("link analysis %s pipeline failed", work.id)
         return {"work_id": work.id, "status": work.status}
@@ -317,15 +577,21 @@ def run_pipeline() -> None:
                 _process_work(db, work, write_pending=True)
                 db.commit()
             except PipelineOfflineError as exc:
+                failed_stage = "transcribe" if work.status == "TRANSCRIBING" else "download"
                 work.status = "FAILED"
                 work.last_error = str(exc)
-                task_repo.mark_failed(db, work.id, "download", str(exc))
+                task_repo.mark_failed(db, work.id, failed_stage, str(exc))
                 db.commit()
                 logger.warning("work %s 流水线离线: %s", work.id, exc)
             except Exception as exc:  # noqa: BLE001
+                failed_stage = {
+                    "DOWNLOADING": "download",
+                    "TRANSCRIBING": "transcribe",
+                    "FRAME_EXTRACTING": "frames",
+                }.get(work.status, "pipeline")
                 work.status = "FAILED"
                 work.last_error = str(exc)
-                task_repo.mark_failed(db, work.id, "pipeline", str(exc))
+                task_repo.mark_failed(db, work.id, failed_stage, str(exc))
                 db.commit()
                 logger.exception("work %s 流水线异常", work.id)
 
@@ -335,25 +601,27 @@ def _process_work(db: Session, work, *, write_pending: bool = True) -> None:
     video 走原五步（下载→转写→抽帧→就绪）；image/text（推特图文）走
     下载图片→写 manifest→跳过转写/抽帧→直接进 AI 笔记。
     """
-    media_dir = _work_media_dir(work)
     content_type = work.content_type or "video"
+    checkpoint = download_and_checkpoint(db, work)
     if content_type != "video":
-        _process_image_work(db, work, media_dir, write_pending=write_pending)
+        work.status = "NOTE_GENERATING"
+        if write_pending:
+            notify.notify_ready(db, work)
+        else:
+            note_task = task_repo.upsert(db, work.id, "note", "pending", attempts=0)
+            note_task.error = None
         return
 
-    work.status = "DOWNLOADING"
-    download_task = task_repo.upsert(db, work.id, "download", "running", attempts=1)
-    download_task.error = None
-    video_path = download.download(work.platform, work.url, media_dir)
-    work.media_path = str(media_dir.relative_to(settings.media_root)).replace("\\", "/")
-    task_repo.upsert(db, work.id, "download", "succeeded", attempts=1)
+    video_file = next((item for item in checkpoint.result.files if item.media_type == "video"), checkpoint.result.files[0])
+    video_path = str(video_file.path)
+    media_dir = checkpoint.media_dir
 
     work.status = "TRANSCRIBING"
     transcribe_task = task_repo.upsert(db, work.id, "transcribe", "running", attempts=1)
     transcribe_task.error = None
     transcript_dir = media_dir / "transcript"
     transcript_path = transcribe.transcribe(video_path, transcript_dir)
-    work.transcript_path = str(Path(transcript_path).relative_to(settings.media_root)).replace("\\", "/")
+    work.transcript_path = relative_path_from_root("media", str(transcript_path))
     task_repo.upsert(db, work.id, "transcribe", "succeeded", attempts=1)
 
     work.status = "FRAME_EXTRACTING"
@@ -369,34 +637,8 @@ def _process_work(db: Session, work, *, write_pending: bool = True) -> None:
     windows = frames.match_windows(segments, entries) if segments else []
     extracted = frames.extract_frames(video_path, windows, frames_dir)
     manifest_path = frames.write_manifest(work.id, extracted, frames_dir)
-    work.frame_manifest_path = str(manifest_path.relative_to(settings.media_root)).replace("\\", "/")
+    work.frame_manifest_path = relative_path_from_root("media", str(manifest_path))
     task_repo.upsert(db, work.id, "frames", "succeeded", attempts=1)
-
-    work.status = "NOTE_GENERATING"
-    if write_pending:
-        notify.notify_ready(db, work)
-    else:
-        note_task = task_repo.upsert(db, work.id, "note", "pending", attempts=0)
-        note_task.error = None
-
-
-def _process_image_work(db: Session, work, media_dir: Path, *, write_pending: bool = True) -> None:
-    """图文作品：curl_cffi 下载图片清单 → 写 manifest → 直接进入 AI 笔记阶段。"""
-    from monitor.pipeline import twitter_image
-
-    work.status = "DOWNLOADING"
-    work.media_path = str(media_dir.relative_to(settings.media_root)).replace("\\", "/")
-    images_dir = media_dir / "images"
-    try:
-        manifest_path = twitter_image.download_images(work, images_dir)
-    except Exception as exc:  # noqa: BLE001
-        work.status = "FAILED"
-        work.last_error = f"图文下载失败: {exc}"
-        task_repo.mark_failed(db, work.id, "download", str(exc))
-        logger.exception("work %s 图文下载异常", work.id)
-        return
-    work.frame_manifest_path = str(manifest_path.relative_to(settings.media_root)).replace("\\", "/")
-    task_repo.upsert(db, work.id, "download", "succeeded", attempts=1)
 
     work.status = "NOTE_GENERATING"
     if write_pending:
@@ -410,7 +652,10 @@ def _load_segments(transcript_rel: str | None) -> list[dict]:
     """读取带时间戳转写稿 [{start,end,text}]；损坏/空返回 []（K15 空文本降级）。"""
     if not transcript_rel:
         return []
-    path = settings.media_root / transcript_rel
+    try:
+        path = resolve_archive_path("media", relative_path_from_root("media", transcript_rel), must_exist=True)
+    except (OSError, ValueError):
+        return []
     if not path.exists():
         return []
     try:

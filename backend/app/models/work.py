@@ -26,6 +26,12 @@ class Work(Base):
     title: Mapped[str] = mapped_column(Text, nullable=False)
     url: Mapped[str] = mapped_column(Text, nullable=False)
     published_at: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Publication provenance is filled only by a successful source response.
+    # Historical rows remain NULL until a later verified refresh.
+    published_time_source: Mapped[str | None] = mapped_column(Text, nullable=True)
+    published_time_precision: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    published_time_timezone: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    metadata_checked_at: Mapped[str | None] = mapped_column(Text, nullable=True)
     # Historical rows have no reliable download receipt; keep this separate from created_at.
     downloaded_at: Mapped[str | None] = mapped_column(Text, nullable=True)
     download_time_source: Mapped[str | None] = mapped_column(Text, nullable=True)

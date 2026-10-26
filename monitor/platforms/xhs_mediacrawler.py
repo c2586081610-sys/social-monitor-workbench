@@ -12,6 +12,7 @@ import os
 import subprocess
 import sys
 import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 
 logger = logging.getLogger("monitor.xhs_mediacrawler")
@@ -65,7 +66,10 @@ class XhsMediacrawlerAdapter:
             except OSError:
                 pass
         items = []
+        checked_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         for n in notes:
+            if not isinstance(n, dict):
+                continue
             nid = n.get("note_id") or ""
             if not nid:
                 continue
@@ -81,13 +85,12 @@ class XhsMediacrawlerAdapter:
                 if t > 10**12:
                     t //= 1000
                 if t > 0:
-                    from datetime import datetime, timezone
-
-                    published_at = datetime.fromtimestamp(t, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-            except (TypeError, ValueError, OSError):
+                    published_dt = datetime.fromtimestamp(t, tz=timezone.utc)
+                    if published_dt.year > 1970:
+                        published_at = published_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+            except (TypeError, ValueError, OverflowError, OSError):
                 pass
-            items.append(
-                {
+            item = {
                     "platform": "xhs",
                     "external_id": nid,
                     "title": n.get("title") or "",
@@ -95,6 +98,15 @@ class XhsMediacrawlerAdapter:
                     "published_at": published_at,
                     "content_type": "image" if not n.get("has_video") else "video",
                     "cover_url": n.get("cover") or None,
+                    "metadata_checked_at": checked_at,
                 }
-            )
+            if published_at:
+                item.update({
+                    "published_time_source": "xhs_mediacrawler_note_time",
+                    "published_time_precision": "second",
+                    "published_time_timezone": "UTC",
+                })
+            else:
+                item.pop("published_at", None)
+            items.append(item)
         return items

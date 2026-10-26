@@ -38,6 +38,8 @@ class ArchiveFilters(BaseModel):
     def validate_range(self) -> "ArchiveFilters":
         if self.date_from and self.date_to and self.date_from > self.date_to:
             raise ValueError("date_from must be on or before date_to")
+        if self.date_to == date.max:
+            raise ValueError("date_to is outside the supported range")
         if isinstance(self.work_id, int) and self.work_id < 1:
             raise ValueError("work_id must be positive")
         if isinstance(self.work_id, list) and any(item < 1 for item in self.work_id):
